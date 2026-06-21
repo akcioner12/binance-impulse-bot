@@ -17,9 +17,9 @@ TG_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 
 WELCOME_TEXT = (
     "👋 *Привет!*\n\n"
-    "Я мониторю фьючерсы Binance и присылаю сигнал, когда любая пара "
-    f"даёт импульс от *{IMPULSE_START_THRESHOLD:.0f}%* за {WINDOW_MINUTES} минут "
-    f"(в любую сторону), а затем каждые *{IMPULSE_STEP:.0f}%* дальше.\n\n"
+    "Я мониторю фьючерсы Binance и Bybit и присылаю сигнал, как только цена "
+    f"любой пары изменится от *{IMPULSE_START_THRESHOLD:.0f}%* (в любую сторону) — "
+    f"а дальше присылаю новый сигнал на каждые *+{IMPULSE_STEP:.0f}%* движения.\n\n"
     "Команды:\n"
     "/start — подписаться на алерты\n"
     "/stop — отписаться\n"
@@ -63,7 +63,7 @@ async def _handle_command(session: aiohttp.ClientSession, chat_id: int, text: st
             f"*Текущие настройки:*\n"
             f"Старт сигнала: {IMPULSE_START_THRESHOLD:.0f}%\n"
             f"Шаг повторных сигналов: {IMPULSE_STEP:.0f}%\n"
-            f"Окно расчёта: {WINDOW_MINUTES} мин\n"
+            f"Скользящее окно: {WINDOW_MINUTES} мин (сигнал может накопиться за любое число таких окон)\n"
             f"Мин. дневной объём: ${MIN_DAILY_VOLUME_USDT:,.0f}\n"
             f"Всего подписчиков: {count_subscribers()}"
         )
