@@ -58,12 +58,13 @@ async def _handle_command(session: aiohttp.ClientSession, chat_id: int, text: st
     elif text.startswith("/status"):
         subscribed = is_subscribed(chat_id)
         status_line = "✅ Вы подписаны" if subscribed else "⛔ Вы не подписаны (/start чтобы подписаться)"
+        window_hours = WINDOW_MINUTES / 60
         msg = (
             f"{status_line}\n\n"
             f"*Текущие настройки:*\n"
             f"Старт сигнала: {IMPULSE_START_THRESHOLD:.0f}%\n"
             f"Шаг повторных сигналов: {IMPULSE_STEP:.0f}%\n"
-            f"Скользящее окно: {WINDOW_MINUTES} мин (сигнал может накопиться за любое число таких окон)\n"
+            f"Скользящее окно: {window_hours:.0f}ч (движение может накопиться за любое время внутри этого окна)\n"
             f"Мин. дневной объём: ${MIN_DAILY_VOLUME_USDT:,.0f}\n"
             f"Всего подписчиков: {count_subscribers()}"
         )

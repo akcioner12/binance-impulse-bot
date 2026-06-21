@@ -13,7 +13,7 @@ import logging
 import time
 import aiohttp
 
-from config import TELEGRAM_TOKEN
+from config import TELEGRAM_TOKEN, WINDOW_MINUTES
 from storage import get_message_id, set_message_id, clear_alert_state
 from analyzer import ImpulseSignal, build_exchange_link
 
@@ -24,6 +24,8 @@ TG_API = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}"
 # Очередь отправки — защита от Telegram rate limit (см. п.5)
 _send_queue: asyncio.Queue = asyncio.Queue()
 _MIN_DELAY_BETWEEN_SENDS = 0.05  # ~20 сообщений/сек, с запасом от лимита Telegram (30/сек)
+
+_WINDOW_HOURS = WINDOW_MINUTES / 60
 
 
 def _format_alert_text(sig: ImpulseSignal) -> str:
@@ -36,7 +38,7 @@ def _format_alert_text(sig: ImpulseSignal) -> str:
         f"{fire} {arrow} *{sig.symbol}* — {word}\n"
         f"Биржа: *{sig.exchange}*\n"
         f"\n"
-        f"Импульс: *{sig.change_pct:+.1f}%* за последние 30 мин\n"
+        f"Импульс: *{sig.change_pct:+.1f}%* за последние {_WINDOW_HOURS:.0f}ч\n"
         f"Уровень: *{sig.level:.0f}%*\n"
         f"Цена: `{sig.window_start_price:,.6f}` → `{sig.current_price:,.6f}`\n"
         f"\n"

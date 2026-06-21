@@ -28,6 +28,7 @@ from collector import stream_all_symbols
 from bybit_collector import stream_bybit_symbols
 from notifier import broadcast_signal
 from commands import run_command_listener
+from daily_report import daily_report_loop
 from storage import init_db, get_all_subscribers, upsert_alert_state, clear_alert_state, get_alert_state, get_all_active_symbols
 
 logging.basicConfig(
@@ -39,6 +40,7 @@ logger = logging.getLogger("main")
 
 tracker = PriceWindowTracker()
 _active_symbols: set[str] = set()       # все символы Binance, для symbols_refresher
+_bybit_only_symbols: list[str] = []     # уникальные символы Bybit, для дневного отчёта
 _symbol_exchange_map: dict[str, str] = {}  # symbol -> 'Binance' | 'Bybit', для восстановления состояния
 
 
@@ -74,21 +76,25 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
 
 
 async def symbols_refresher():
-    """Периодически обновляет список торгуемых пар Binance и перезапускает WS при изменениях."""
-    global _active_symbols
+    """Периодически обновляет список торгуемых пар (Binance + Bybit) и пересчитывает дубли."""
+    global _active_symbols, _bybit_only_symbols
     while True:
         try:
             async with aiohttp.ClientSession() as session:
-                symbols = await get_tradable_symbols(session)
-            new_set = set(symbols)
-            if new_set != _active_symbols:
+                binance_symbols = await get_tradable_symbols(session)
+                bybit_symbols = await get_bybit_tradable_symbols(session)
+            new_binance_set = set(binance_symbols)
+            new_bybit_only = sorted(set(bybit_symbols) - new_binance_set)
+            if new_binance_set != _active_symbols or new_bybit_only != _bybit_only_symbols:
                 logger.info(
-                    f"Список пар Binance изменился: было {len(_active_symbols)}, стало {len(new_set)}. "
-                    f"Изменения вступят в силу при следующем перезапуске WS."
+                    f"Список пар изменился: Binance было {len(_active_symbols)} -> {len(new_binance_set)}, "
+                    f"Bybit-уникальных было {len(_bybit_only_symbols)} -> {len(new_bybit_only)}. "
+                    f"Изменения в WS вступят в силу при следующем перезапуске."
                 )
-                _active_symbols = new_set
+                _active_symbols = new_binance_set
+                _bybit_only_symbols = new_bybit_only
         except Exception as e:
-            logger.exception(f"Ошибка обновления списка пар Binance: {e}")
+            logger.exception(f"Ошибка обновления списка пар: {e}")
         await asyncio.sleep(SYMBOLS_REFRESH_SEC)
 
 
@@ -107,8 +113,9 @@ async def main():
     bybit_only = sorted(bybit_set - binance_set)
     overlap_count = len(bybit_set & binance_set)
 
-    global _active_symbols, _symbol_exchange_map
+    global _active_symbols, _bybit_only_symbols, _symbol_exchange_map
     _active_symbols = binance_set
+    _bybit_only_symbols = bybit_only
     _symbol_exchange_map = {s: "Binance" for s in binance_symbols}
     _symbol_exchange_map.update({s: "Bybit" for s in bybit_only})
 
@@ -134,6 +141,9 @@ async def main():
     async def on_bybit_kline(symbol: str, price: float, ts: int):
         await on_kline_close(symbol, "Bybit", price, ts)
 
+    def get_symbols_for_report():
+        return list(_active_symbols), list(_bybit_only_symbols)
+
     logger.info(f"Мониторинг запущен: {len(binance_symbols)} пар Binance + {len(bybit_only)} уникальных пар Bybit")
 
     async with aiohttp.ClientSession() as cmd_session:
@@ -142,6 +152,7 @@ async def main():
             stream_bybit_symbols(bybit_only, on_bybit_kline),
             run_command_listener(cmd_session),
             symbols_refresher(),
+            daily_report_loop(get_symbols_for_report, get_all_subscribers),
         )
 
 
