@@ -21,5 +21,12 @@ DB_PATH = os.getenv("DB_PATH", "bot_state.db")
 BINANCE_FUTURES_REST = "https://fapi.binance.com"
 BINANCE_FUTURES_WS   = "wss://fstream.binance.com"
 
+BYBIT_FUTURES_REST = "https://api.bybit.com"
+BYBIT_FUTURES_WS   = "wss://stream.bybit.com/v5/public/linear"
+
 # Binance позволяет до 200 потоков на одно соединение, делаем чуть меньше для надёжности
 SYMBOLS_PER_WS_CONNECTION = 150
+
+# Bybit ограничивает число args в одной WS-подписке (обычно 10 в одном пакете подписки,
+# но можно отправлять несколько пакетов подряд через одно соединение)
+BYBIT_SYMBOLS_PER_SUBSCRIBE_BATCH = 10

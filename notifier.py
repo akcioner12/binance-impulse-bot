@@ -15,7 +15,7 @@ import aiohttp
 
 from config import TELEGRAM_TOKEN
 from storage import get_message_id, set_message_id, clear_alert_state
-from analyzer import ImpulseSignal
+from analyzer import ImpulseSignal, build_exchange_link
 
 logger = logging.getLogger(__name__)
 
@@ -30,15 +30,17 @@ def _format_alert_text(sig: ImpulseSignal) -> str:
     arrow = "🚀" if sig.direction == "up" else "🔻"
     word = "РОСТ" if sig.direction == "up" else "ПАДЕНИЕ"
     fire = "🔥" * min(int(sig.level // 30), 3)
+    link = build_exchange_link(sig.exchange, sig.symbol)
 
     return (
         f"{fire} {arrow} *{sig.symbol}* — {word}\n"
+        f"Биржа: *{sig.exchange}*\n"
         f"\n"
         f"Импульс: *{sig.change_pct:+.1f}%* за последние 30 мин\n"
         f"Уровень: *{sig.level:.0f}%*\n"
         f"Цена: `{sig.window_start_price:,.6f}` → `{sig.current_price:,.6f}`\n"
         f"\n"
-        f"[Открыть на Binance](https://www.binance.com/en/futures/{sig.symbol})\n"
+        f"[Открыть на {sig.exchange}]({link})\n"
         f"_Обновлено: {time.strftime('%H:%M:%S UTC', time.gmtime())}_"
     )
 

@@ -24,15 +24,27 @@ logger = logging.getLogger(__name__)
 WINDOW_SECONDS = WINDOW_MINUTES * 60
 
 
+EXCHANGE_LINK_TEMPLATES = {
+    "Binance": "https://www.binance.com/en/futures/{symbol}",
+    "Bybit":   "https://www.bybit.com/trade/usdt/{symbol}",
+}
+
+
+def build_exchange_link(exchange: str, symbol: str) -> str:
+    template = EXCHANGE_LINK_TEMPLATES.get(exchange, EXCHANGE_LINK_TEMPLATES["Binance"])
+    return template.format(symbol=symbol)
+
+
 @dataclass
 class ImpulseSignal:
     symbol: str
-    direction: str       # 'up' | 'down'
-    level: float         # достигнутый уровень: 30, 40, 50 ...
-    change_pct: float    # фактическое изменение, например 31.4
+    exchange: str        # 'Binance' | 'Bybit' — биржа-источник данных
+    direction: str        # 'up' | 'down'
+    level: float          # достигнутый уровень: 30, 40, 50 ...
+    change_pct: float     # фактическое изменение, например 31.4
     window_start_price: float
     current_price: float
-    is_new_peak: bool    # True если это новый максимум импульса (не первый сигнал по нему)
+    is_new_peak: bool     # True если это новый максимум импульса (не первый сигнал по нему)
 
 
 class PriceWindowTracker:
@@ -49,9 +61,10 @@ class PriceWindowTracker:
     def is_active(self, symbol: str) -> bool:
         return symbol in self._active
 
-    def update(self, symbol: str, price: float, ts: int | None = None) -> ImpulseSignal | None:
+    def update(self, symbol: str, exchange: str, price: float, ts: int | None = None) -> ImpulseSignal | None:
         """
         Добавляет новую точку цены и проверяет импульс.
+        exchange — 'Binance' или 'Bybit', попадает в итоговый сигнал и в ссылку алерта.
         ts — unix timestamp в секундах (по умолчанию текущее время).
         """
         ts = ts or int(time.time())
@@ -94,7 +107,7 @@ class PriceWindowTracker:
                     level += IMPULSE_STEP
                 self._active[symbol] = {"direction": direction, "level": level}
                 return ImpulseSignal(
-                    symbol=symbol, direction=direction, level=level,
+                    symbol=symbol, exchange=exchange, direction=direction, level=level,
                     change_pct=round(change_pct, 2),
                     window_start_price=window_start_price, current_price=price,
                     is_new_peak=True,
@@ -105,7 +118,7 @@ class PriceWindowTracker:
         if abs_change >= IMPULSE_START_THRESHOLD:
             self._active[symbol] = {"direction": direction, "level": IMPULSE_START_THRESHOLD}
             return ImpulseSignal(
-                symbol=symbol, direction=direction, level=IMPULSE_START_THRESHOLD,
+                symbol=symbol, exchange=exchange, direction=direction, level=IMPULSE_START_THRESHOLD,
                 change_pct=round(change_pct, 2),
                 window_start_price=window_start_price, current_price=price,
                 is_new_peak=False,  # первый сигнал по этому импульсу
