@@ -4,7 +4,7 @@ Binance + Bybit Futures — мониторинг импульса цены по 
 Архитектура:
 1. fetcher.py / bybit_fetcher.py   — список торгуемых пар на каждой бирже (весь рынок, фильтр по объёму)
 2. collector.py / bybit_collector.py — WebSocket-стримы, пуш при закрытии каждой минутной свечи
-3. analyzer.py    — скользящее окно 30 мин, детект импульса 30% -> +10% -> +10% ...
+3. analyzer.py    — скользящее окно 24ч, детект импульса 30% -> +10% -> +10% ...
 4. notifier.py    — отправка/редактирование сообщений в Telegram (схлопывание по монете, ссылка на нужную биржу)
 5. commands.py    — обработка /start /stop /status (long polling, параллельно)
 6. storage.py     — SQLite: подписчики + состояние алертов (персистентность)
@@ -12,6 +12,10 @@ Binance + Bybit Futures — мониторинг импульса цены по 
 Правило дублей (см. договорённости): если токен есть на Binance — мониторим
 только через Binance. Bybit подключается только для токенов, которых на
 Binance нет вообще. Так каждый тикер обрабатывается ровно одной биржей.
+
+Раз в сутки (SYMBOLS_REFRESH_SEC) список пар на обеих биржах пересчитывается
+заново (новые/делистнутые пары, изменения объёма) и WebSocket-подписки
+перезапускаются с обновлённым списком — а не просто обновляются в памяти.
 """
 
 import asyncio
@@ -39,9 +43,8 @@ logging.basicConfig(
 logger = logging.getLogger("main")
 
 tracker = PriceWindowTracker()
-_active_symbols: set[str] = set()       # все символы Binance, для symbols_refresher
-_bybit_only_symbols: list[str] = []     # уникальные символы Bybit, для дневного отчёта
-_symbol_exchange_map: dict[str, str] = {}  # symbol -> 'Binance' | 'Bybit', для восстановления состояния
+_active_symbols: set[str] = set()       # все символы Binance, для symbols_refresher и отчёта
+_bybit_only_symbols: list[str] = []     # уникальные символы Bybit, для symbols_refresher и отчёта
 
 
 async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
@@ -75,55 +78,85 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
     )
 
 
-async def symbols_refresher():
-    """Периодически обновляет список торгуемых пар (Binance + Bybit) и пересчитывает дубли."""
-    global _active_symbols, _bybit_only_symbols
-    while True:
-        try:
-            async with aiohttp.ClientSession() as session:
-                binance_symbols = await get_tradable_symbols(session)
-                bybit_symbols = await get_bybit_tradable_symbols(session)
-            new_binance_set = set(binance_symbols)
-            new_bybit_only = sorted(set(bybit_symbols) - new_binance_set)
-            if new_binance_set != _active_symbols or new_bybit_only != _bybit_only_symbols:
-                logger.info(
-                    f"Список пар изменился: Binance было {len(_active_symbols)} -> {len(new_binance_set)}, "
-                    f"Bybit-уникальных было {len(_bybit_only_symbols)} -> {len(new_bybit_only)}. "
-                    f"Изменения в WS вступят в силу при следующем перезапуске."
-                )
-                _active_symbols = new_binance_set
-                _bybit_only_symbols = new_bybit_only
-        except Exception as e:
-            logger.exception(f"Ошибка обновления списка пар: {e}")
-        await asyncio.sleep(SYMBOLS_REFRESH_SEC)
+async def on_binance_kline(symbol: str, price: float, ts: int):
+    await on_kline_close(symbol, "Binance", price, ts)
 
 
-async def main():
-    init_db()
+async def on_bybit_kline(symbol: str, price: float, ts: int):
+    await on_kline_close(symbol, "Bybit", price, ts)
 
-    logger.info("Загружаю списки торгуемых пар с Binance и Bybit...")
+
+async def fetch_current_symbol_lists() -> tuple[list[str], list[str]]:
+    """Запрашивает свежие списки пар с обеих бирж и применяет правило дублей."""
     async with aiohttp.ClientSession() as session:
         binance_symbols = await get_tradable_symbols(session)
         bybit_symbols = await get_bybit_tradable_symbols(session)
 
     binance_set = set(binance_symbols)
-    bybit_set = set(bybit_symbols)
-
-    # Правило дублей: Bybit мониторим только для символов, которых нет на Binance
-    bybit_only = sorted(bybit_set - binance_set)
-    overlap_count = len(bybit_set & binance_set)
-
-    global _active_symbols, _bybit_only_symbols, _symbol_exchange_map
-    _active_symbols = binance_set
-    _bybit_only_symbols = bybit_only
-    _symbol_exchange_map = {s: "Binance" for s in binance_symbols}
-    _symbol_exchange_map.update({s: "Bybit" for s in bybit_only})
+    bybit_only = sorted(set(bybit_symbols) - binance_set)
+    overlap_count = len(set(bybit_symbols) & binance_set)
 
     logger.info(
         f"Binance: {len(binance_symbols)} пар. Bybit: {len(bybit_symbols)} пар, "
         f"из них {overlap_count} пересекаются с Binance (пропускаются), "
         f"{len(bybit_only)} уникальны для Bybit (мониторятся)."
     )
+    return sorted(binance_symbols), bybit_only
+
+
+async def collectors_supervisor():
+    """
+    Раз в SYMBOLS_REFRESH_SEC секунд (по умолчанию 24ч) пересчитывает список торгуемых
+    пар на обеих биржах и ПЕРЕЗАПУСКАЕТ WebSocket-подписки с этим обновлённым списком —
+    новые/выросшие по объёму пары начинают мониториться, исчезнувшие/упавшие — отключаются.
+    """
+    global _active_symbols, _bybit_only_symbols
+
+    while True:
+        binance_symbols, bybit_only = await fetch_current_symbol_lists()
+        _active_symbols = set(binance_symbols)
+        _bybit_only_symbols = bybit_only
+
+        logger.info(
+            f"Запускаю WS-подписки: {len(binance_symbols)} пар Binance + "
+            f"{len(bybit_only)} уникальных пар Bybit"
+        )
+
+        binance_task = asyncio.create_task(stream_all_symbols(binance_symbols, on_binance_kline))
+        bybit_task = asyncio.create_task(stream_bybit_symbols(bybit_only, on_bybit_kline))
+
+        # Ждём либо истечения интервала обновления, либо неожиданного завершения
+        # одной из задач коллектора (это сигнал проблемы, а не штатное событие —
+        # коллекторы рассчитаны работать вечно с автопереподключением внутри).
+        done, pending = await asyncio.wait(
+            [binance_task, bybit_task],
+            timeout=SYMBOLS_REFRESH_SEC,
+            return_when=asyncio.FIRST_COMPLETED,
+        )
+
+        if done:
+            for task in done:
+                exc = task.exception() if task.done() and not task.cancelled() else None
+                if exc:
+                    logger.error(f"Коллектор неожиданно завершился с ошибкой: {exc}. Перезапускаю немедленно.")
+                else:
+                    logger.warning("Коллектор неожиданно завершился без ошибки. Перезапускаю немедленно.")
+
+        logger.info("Останавливаю текущие WS-подписки для пересборки списка пар...")
+        for task in (binance_task, bybit_task):
+            if not task.done():
+                task.cancel()
+        await asyncio.gather(binance_task, bybit_task, return_exceptions=True)
+
+
+def get_symbols_for_report() -> tuple[list[str], list[str]]:
+    return list(_active_symbols), list(_bybit_only_symbols)
+
+
+async def main():
+    init_db()
+
+    logger.info("Загружаю начальные списки торгуемых пар с Binance и Bybit...")
 
     # Восстанавливаем активные импульсы из БД (переживаем перезапуск без потери состояния)
     restored = 0
@@ -135,23 +168,10 @@ async def main():
     if restored:
         logger.info(f"Восстановлено {restored} активных импульсов из БД")
 
-    async def on_binance_kline(symbol: str, price: float, ts: int):
-        await on_kline_close(symbol, "Binance", price, ts)
-
-    async def on_bybit_kline(symbol: str, price: float, ts: int):
-        await on_kline_close(symbol, "Bybit", price, ts)
-
-    def get_symbols_for_report():
-        return list(_active_symbols), list(_bybit_only_symbols)
-
-    logger.info(f"Мониторинг запущен: {len(binance_symbols)} пар Binance + {len(bybit_only)} уникальных пар Bybit")
-
     async with aiohttp.ClientSession() as cmd_session:
         await asyncio.gather(
-            stream_all_symbols(binance_symbols, on_binance_kline),
-            stream_bybit_symbols(bybit_only, on_bybit_kline),
+            collectors_supervisor(),
             run_command_listener(cmd_session),
-            symbols_refresher(),
             daily_report_loop(get_symbols_for_report, get_all_subscribers),
         )
 

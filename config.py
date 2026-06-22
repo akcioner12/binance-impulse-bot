@@ -13,7 +13,7 @@ WINDOW_MINUTES          = int(os.getenv("WINDOW_MINUTES", "1440"))              
 
 # --- Фильтр рынка ---
 MIN_DAILY_VOLUME_USDT = float(os.getenv("MIN_DAILY_VOLUME_USDT", "1500000"))    # $1.5M — отсекает мёртвые пары
-SYMBOLS_REFRESH_SEC   = int(os.getenv("SYMBOLS_REFRESH_SEC", "3600"))           # как часто обновлять список пар
+SYMBOLS_REFRESH_SEC   = int(os.getenv("SYMBOLS_REFRESH_SEC", "86400"))          # 24ч — как часто пересобирать список пар и перезапускать WS
 
 # --- Ежедневный отчёт топ-10 ---
 DAILY_REPORT_HOUR_UTC   = int(os.getenv("DAILY_REPORT_HOUR_UTC", "17"))   # 20:00 Киев/Москва (UTC+3) = 17:00 UTC
