@@ -24,7 +24,7 @@ DAILY_REPORT_TOP_N      = int(os.getenv("DAILY_REPORT_TOP_N", "10"))
 DB_PATH = os.getenv("DB_PATH", "bot_state.db")
 
 BINANCE_FUTURES_REST = "https://fapi.binance.com"
-BINANCE_FUTURES_WS   = "wss://fstream.binance.com"
+BINANCE_FUTURES_WS   = "wss://fstream.binance.com/market"
 
 BYBIT_FUTURES_REST = "https://api.bybit.com"
 BYBIT_FUTURES_WS   = "wss://stream.bybit.com/v5/public/linear"
