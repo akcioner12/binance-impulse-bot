@@ -42,13 +42,37 @@ logging.basicConfig(
 )
 logger = logging.getLogger("main")
 
+# Включаем DEBUG только для наших модулей (не для websockets/aiohttp — иначе зальём логи шумом).
+# Это даёт доступ к диагностике уровня логов analyzer.py (приближение к порогу) и main.py (полный
+# список пар) без раздувания общего объёма логов от сторонних библиотек.
+for _mod in ("main", "analyzer", "fetcher", "bybit_fetcher", "collector", "bybit_collector"):
+    logging.getLogger(_mod).setLevel(logging.DEBUG)
+
 tracker = PriceWindowTracker()
 _active_symbols: set[str] = set()       # все символы Binance, для symbols_refresher и отчёта
 _bybit_only_symbols: list[str] = []     # уникальные символы Bybit, для symbols_refresher и отчёта
+_tick_count = 0                          # диагностика: общее число обработанных тиков с момента старта
+_last_tick_log_time = 0.0
+_seen_symbols: set[str] = set()         # диагностика: подтверждение первого тика по каждому символу
 
 
 async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
     """Вызывается коллектором (любой биржи) при закрытии каждой минутной свечи."""
+    global _tick_count, _last_tick_log_time
+    _tick_count += 1
+
+    if symbol not in _seen_symbols:
+        _seen_symbols.add(symbol)
+        logger.debug(f"Первый тик получен: {symbol} [{exchange}] price={price}")
+
+    # Раз в час логируем суммарное число обработанных тиков — если коллектор молча
+    # перестанет получать данные (например, из-за тихого разрыва соединения без
+    # исключения), это будет видно по тому, что счётчик перестал расти.
+    now = time.time()
+    if now - _last_tick_log_time >= 3600:
+        logger.info(f"Диагностика: обработано тиков с момента старта = {_tick_count}, уникальных символов = {len(_seen_symbols)}")
+        _last_tick_log_time = now
+
     signal = tracker.update(symbol, exchange, price, ts)
 
     if signal is None:
@@ -101,6 +125,10 @@ async def fetch_current_symbol_lists() -> tuple[list[str], list[str]]:
         f"из них {overlap_count} пересекаются с Binance (пропускаются), "
         f"{len(bybit_only)} уникальны для Bybit (мониторятся)."
     )
+    # Полный список пар на DEBUG-уровне — чтобы при расследовании пропущенного сигнала
+    # можно было найти конкретный тикер в логах и подтвердить/исключить его отсутствие в подписке.
+    logger.debug(f"Полный список Binance: {','.join(sorted(binance_symbols))}")
+    logger.debug(f"Полный список Bybit-only: {','.join(bybit_only)}")
     return sorted(binance_symbols), bybit_only
 
 

@@ -88,6 +88,16 @@ class PriceWindowTracker:
         abs_change = abs(change_pct)
         direction = "up" if change_pct > 0 else "down"
 
+        # Диагностика: логируем приближение к порогу (от 80% от стартового уровня),
+        # даже если сигнал не отправлен. Помогает понять постфактум, видел ли бот
+        # вообще движение по символу и почему не сработал сигнал.
+        if abs_change >= IMPULSE_START_THRESHOLD * 0.8:  # от 24% и выше при пороге 30%
+            logger.debug(
+                f"{symbol}: abs_change={abs_change:.1f}% direction={direction} "
+                f"buf_len={len(buf)} window_start={window_start_price} current={price} "
+                f"active_state={self._active.get(symbol)}"
+            )
+
         state = self._active.get(symbol)
 
         # --- Импульс активен ---
