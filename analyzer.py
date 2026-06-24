@@ -17,7 +17,7 @@ import logging
 from collections import deque
 from dataclasses import dataclass
 
-from config import IMPULSE_START_THRESHOLD, IMPULSE_STEP, WINDOW_MINUTES
+from config import IMPULSE_START_THRESHOLD, IMPULSE_STEP, IMPULSE_RESET_HYSTERESIS, WINDOW_MINUTES
 
 logger = logging.getLogger(__name__)
 
@@ -102,10 +102,19 @@ class PriceWindowTracker:
 
         # --- Импульс активен ---
         if state and state["direction"] == direction:
-            # Откат ниже стартового порога — импульс затух, сбрасываем
-            if abs_change < IMPULSE_START_THRESHOLD:
+            # Сброс происходит только при заметном откате — на IMPULSE_RESET_HYSTERESIS
+            # процентных пунктов НИЖЕ ДОСТИГНУТОГО УРОВНЯ, а не ниже стартового порога.
+            # Например: достигли 30% -> сброс только при откате до 10% (30 - 20).
+            # Без этого любое мелкое колебание цены около 30% (даже на десятые доли
+            # процента) сбрасывало бы счётчик и вызывало повторный сигнал на том же
+            # уровне — именно это случилось с CLOUSDT.
+            reset_threshold = state["level"] - IMPULSE_RESET_HYSTERESIS
+            if abs_change < reset_threshold:
                 del self._active[symbol]
-                logger.info(f"{symbol}: импульс {direction} затух ({abs_change:.1f}%)")
+                logger.info(
+                    f"{symbol}: импульс {direction} затух (откат до {abs_change:.1f}%, "
+                    f"был на уровне {state['level']:.0f}%)"
+                )
                 return None
 
             # Проверяем, не достигли ли следующего уровня (+10%)

@@ -9,6 +9,10 @@ TELEGRAM_TOKEN = os.getenv("TELEGRAM_TOKEN", "")
 # --- Логика импульса ---
 IMPULSE_START_THRESHOLD = float(os.getenv("IMPULSE_START_THRESHOLD", "30.0"))   # % — порог первого сигнала
 IMPULSE_STEP            = float(os.getenv("IMPULSE_STEP", "10.0"))              # % — шаг повторных сигналов
+IMPULSE_RESET_HYSTERESIS = float(os.getenv("IMPULSE_RESET_HYSTERESIS", "20.0")) # % — на сколько п.п. цена должна откатиться
+                                                                                  # ОТ ДОСТИГНУТОГО УРОВНЯ, чтобы импульс считался затухшим
+                                                                                  # (без этого любой мелкий откат сбрасывал бы счётчик и
+                                                                                  # вызывал повторные сигналы на том же уровне — см. инцидент с CLOUSDT)
 WINDOW_MINUTES          = int(os.getenv("WINDOW_MINUTES", "1440"))              # скользящее окно в минутах (1440 = 24ч)
 
 # --- Фильтр рынка ---
