@@ -223,3 +223,30 @@ def is_near_significant_level(
         if distance_pct <= proximity_pct:
             return True
     return False
+
+
+def atr(candles: list[dict], period: int = 14) -> list[float | None]:
+    """
+    Average True Range по методу Уайлдера (то же сглаживание, что и rsi()).
+    Результат той же длины, что и `candles` — первые `period` элементов None.
+    """
+    result: list[float | None] = [None] * len(candles)
+    if len(candles) < period + 1:
+        return result
+
+    true_ranges = []
+    for i in range(1, len(candles)):
+        high = candles[i]["high"]
+        low = candles[i]["low"]
+        prev_close = candles[i - 1]["close"]
+        true_range = max(high - low, abs(high - prev_close), abs(low - prev_close))
+        true_ranges.append(true_range)
+
+    avg_tr = sum(true_ranges[:period]) / period
+    result[period] = avg_tr
+
+    for i in range(period, len(true_ranges)):
+        avg_tr = (avg_tr * (period - 1) + true_ranges[i]) / period
+        result[i + 1] = avg_tr
+
+    return result
