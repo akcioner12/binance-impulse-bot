@@ -9,13 +9,15 @@ import aiohttp
 
 from config import TELEGRAM_TOKEN, IMPULSE_START_THRESHOLD, IMPULSE_STEP, WINDOW_MINUTES, MIN_DAILY_VOLUME_USDT, ADMIN_CHAT_ID
 from storage import add_subscriber, remove_subscriber, is_subscribed, count_subscribers
-from notifier import send_text, answer_callback_query
+from notifier import send_text, send_text_with_keyboard, answer_callback_query
 from trading_onboarding import (
     start_trading_setup,
     handle_callback as onboarding_handle_callback,
     handle_text as onboarding_handle_text,
 )
 import trade_signal_ux
+import trading_storage
+import emergency_controls
 
 logger = logging.getLogger(__name__)
 
@@ -87,6 +89,51 @@ async def _handle_command(session: aiohttp.ClientSession, chat_id: int, text: st
             return
         await start_trading_setup(session, chat_id)
 
+    elif stripped.startswith("/emergency"):
+        if chat_id != ADMIN_CHAT_ID:
+            return
+        await _handle_emergency_command(session, chat_id)
+
+
+async def _handle_emergency_command(session: aiohttp.ClientSession, chat_id: int):
+    profile = trading_storage.get_profile(chat_id)
+    is_active = profile["is_active"] if profile else 1
+    if is_active:
+        toggle_button = {"text": "⏸ Остановить торговлю", "callback_data": "emergency:stop"}
+    else:
+        toggle_button = {"text": "▶️ Возобновить торговлю", "callback_data": "emergency:start"}
+
+    await send_text_with_keyboard(
+        session, chat_id,
+        "🚨 *Аварийные контролы автотрейдинга*",
+        [
+            [toggle_button],
+            [{"text": "🔴 Закрыть все позиции сейчас", "callback_data": "emergency:close_all"}],
+            [{"text": "🛡 Перенести все в безубыток+", "callback_data": "emergency:breakeven_all"}],
+        ],
+    )
+
+
+async def _handle_emergency_callback(session: aiohttp.ClientSession, chat_id: int, action: str):
+    if action == "stop":
+        emergency_controls.stop_trading(chat_id)
+        await send_text(session, chat_id, "⏸ Торговля остановлена. Открытые позиции продолжают управляться штатно.")
+    elif action == "start":
+        emergency_controls.start_trading(chat_id)
+        await send_text(session, chat_id, "▶️ Торговля возобновлена.")
+    elif action == "close_all":
+        symbols = emergency_controls.close_all_positions_now(chat_id)
+        if symbols:
+            await send_text(session, chat_id, f"🔴 Закрытие запущено: {', '.join(symbols)} (сработает на ближайшем тике).")
+        else:
+            await send_text(session, chat_id, "Открытых позиций нет.")
+    elif action == "breakeven_all":
+        symbols = emergency_controls.move_all_to_breakeven_plus_now(chat_id)
+        if symbols:
+            await send_text(session, chat_id, f"🛡 Перенесено в безубыток+: {', '.join(symbols)}.")
+        else:
+            await send_text(session, chat_id, "Нет позиций для переноса (открытых нет или уже на трейлинге).")
+
 
 async def _handle_callback_query(session: aiohttp.ClientSession, callback_query: dict):
     callback_id = callback_query["id"]
@@ -96,6 +143,9 @@ async def _handle_callback_query(session: aiohttp.ClientSession, callback_query:
     if data.startswith("trade_confirm:"):
         _, choice, symbol = data.split(":", 2)
         await trade_signal_ux.handle_confirmation_callback(symbol, choice)
+    elif data.startswith("emergency:"):
+        action = data.split(":", 1)[1]
+        await _handle_emergency_callback(session, chat_id, action)
     else:
         await onboarding_handle_callback(session, chat_id, data)
 
