@@ -89,3 +89,35 @@ def calculate_breakeven_plus_price(avg_entry_price: float, direction: str, commi
     if direction == "long":
         return avg_entry_price + commission_distance
     return avg_entry_price - commission_distance
+
+
+class ChandelierTrailingStop:
+    """
+    Трейлинг-стоп для TP4 (остаток позиции после TP1-3): стоп = экстремум цены
+    с момента создания минус/плюс atr_multiplier×ATR. Стоп — храповик: двигается
+    только в выгодную сторону, никогда не откатывается назад.
+    """
+
+    def __init__(self, direction: str, atr_multiplier: float = 2.5):
+        self.direction = direction
+        self.atr_multiplier = atr_multiplier
+        self.extreme_price: float | None = None
+        self.stop_price: float | None = None
+
+    def update(self, price: float, atr: float) -> float:
+        if self.direction == "long":
+            self.extreme_price = price if self.extreme_price is None else max(self.extreme_price, price)
+            candidate_stop = self.extreme_price - atr * self.atr_multiplier
+            self.stop_price = candidate_stop if self.stop_price is None else max(self.stop_price, candidate_stop)
+        else:
+            self.extreme_price = price if self.extreme_price is None else min(self.extreme_price, price)
+            candidate_stop = self.extreme_price + atr * self.atr_multiplier
+            self.stop_price = candidate_stop if self.stop_price is None else min(self.stop_price, candidate_stop)
+        return self.stop_price
+
+    def is_triggered(self, price: float) -> bool:
+        if self.stop_price is None:
+            return False
+        if self.direction == "long":
+            return price <= self.stop_price
+        return price >= self.stop_price
