@@ -76,3 +76,52 @@ async def test_fetch_funding_rate_unknown_exchange_raises():
     session = _FakeSession({})
     with pytest.raises(ValueError):
         await market_data.fetch_funding_rate(session, "Kraken", "BTCUSDT")
+
+
+BINANCE_OI_HISTORY = [
+    {"symbol": "BTCUSDT", "sumOpenInterest": "1000.0", "sumOpenInterestValue": "50000000", "timestamp": 1000},
+    {"symbol": "BTCUSDT", "sumOpenInterest": "950.0", "sumOpenInterestValue": "48000000", "timestamp": 2000},
+]
+
+BYBIT_OI_HISTORY = {
+    "retCode": 0,
+    "result": {
+        "category": "linear",
+        "symbol": "BTCUSDT",
+        "list": [
+            {"openInterest": "950.0", "timestamp": "2000"},
+            {"openInterest": "1000.0", "timestamp": "1000"},
+        ],
+    },
+}
+
+
+@pytest.mark.asyncio
+async def test_fetch_open_interest_history_binance_parses_ascending():
+    session = _FakeSession(BINANCE_OI_HISTORY)
+    history = await market_data.fetch_open_interest_history(session, "Binance", "BTCUSDT", period="5m", limit=2)
+
+    assert len(history) == 2
+    assert history[0] == {"timestamp": 1000, "open_interest": 1000.0}
+    assert history[1] == {"timestamp": 2000, "open_interest": 950.0}
+    assert "openInterestHist" in session.last_url
+    assert session.last_params["period"] == "5m"
+
+
+@pytest.mark.asyncio
+async def test_fetch_open_interest_history_bybit_parses_and_reorders_ascending():
+    session = _FakeSession(BYBIT_OI_HISTORY)
+    history = await market_data.fetch_open_interest_history(session, "Bybit", "BTCUSDT", period="5m", limit=2)
+
+    assert len(history) == 2
+    assert history[0] == {"timestamp": 1000, "open_interest": 1000.0}
+    assert history[1] == {"timestamp": 2000, "open_interest": 950.0}
+    assert "open-interest" in session.last_url
+    assert session.last_params["intervalTime"] == "5min"
+
+
+@pytest.mark.asyncio
+async def test_fetch_open_interest_history_bybit_returns_empty_on_error():
+    session = _FakeSession({"retCode": 10001, "retMsg": "bad symbol", "result": {"list": []}})
+    history = await market_data.fetch_open_interest_history(session, "Bybit", "BADSYMBOL")
+    assert history == []

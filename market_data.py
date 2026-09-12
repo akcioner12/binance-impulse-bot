@@ -109,3 +109,50 @@ async def fetch_funding_rate(session: aiohttp.ClientSession, exchange: str, symb
     if exchange == "Bybit":
         return await _fetch_bybit_funding_rate(session, symbol)
     raise ValueError(f"Неизвестная биржа: {exchange}")
+
+
+_BYBIT_OI_INTERVAL_MAP = {"5m": "5min", "15m": "15min", "1h": "1h", "4h": "4h"}
+
+
+async def _fetch_binance_oi_history(session: aiohttp.ClientSession, symbol: str, period: str, limit: int) -> list[dict]:
+    url = f"{BINANCE_FUTURES_REST}/futures/data/openInterestHist"
+    params = {"symbol": symbol, "period": period, "limit": limit}
+    async with session.get(url, params=params) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
+
+    return [
+        {"timestamp": int(row["timestamp"]), "open_interest": float(row["sumOpenInterest"])}
+        for row in data
+    ]
+
+
+async def _fetch_bybit_oi_history(session: aiohttp.ClientSession, symbol: str, interval_time: str, limit: int) -> list[dict]:
+    url = f"{BYBIT_FUTURES_REST}/v5/market/open-interest"
+    params = {"category": "linear", "symbol": symbol, "intervalTime": interval_time, "limit": limit}
+    async with session.get(url, params=params) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
+
+    if data.get("retCode") != 0:
+        logger.error(f"Bybit OI ошибка ({symbol}): {data.get('retMsg')}")
+        return []
+
+    history = [
+        {"timestamp": int(row["timestamp"]), "open_interest": float(row["openInterest"])}
+        for row in data["result"]["list"]
+    ]
+    history.sort(key=lambda v: v["timestamp"])  # Bybit отдаёт новые записи первыми
+    return history
+
+
+async def fetch_open_interest_history(
+    session: aiohttp.ClientSession, exchange: str, symbol: str, period: str = "5m", limit: int = 30
+) -> list[dict]:
+    """period — в формате Binance: '5m','15m','1h','4h' (для Bybit конвертируется автоматически)."""
+    if exchange == "Binance":
+        return await _fetch_binance_oi_history(session, symbol, period, limit)
+    if exchange == "Bybit":
+        bybit_interval = _BYBIT_OI_INTERVAL_MAP[period]
+        return await _fetch_bybit_oi_history(session, symbol, bybit_interval, limit)
+    raise ValueError(f"Неизвестная биржа: {exchange}")
