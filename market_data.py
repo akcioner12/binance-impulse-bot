@@ -13,7 +13,7 @@ from config import BINANCE_FUTURES_REST, BYBIT_FUTURES_REST
 
 logger = logging.getLogger(__name__)
 
-_BYBIT_INTERVAL_MAP = {"15m": "15", "1h": "60", "4h": "240"}
+_BYBIT_INTERVAL_MAP = {"15m": "15", "1h": "60", "4h": "240", "1d": "D", "1w": "W"}
 
 
 async def _fetch_binance_klines(session: aiohttp.ClientSession, symbol: str, interval: str, limit: int) -> list[dict]:

@@ -89,6 +89,16 @@ async def test_fetch_klines_bybit_parses_and_reorders_ascending():
 
 
 @pytest.mark.asyncio
+async def test_fetch_klines_bybit_interval_mapping_for_daily_and_weekly():
+    session = _FakeSession(BYBIT_RAW_KLINES)
+    await market_data.fetch_klines(session, "Bybit", "BTCUSDT", "1d", limit=2)
+    assert session.last_params["interval"] == "D"
+
+    await market_data.fetch_klines(session, "Bybit", "BTCUSDT", "1w", limit=2)
+    assert session.last_params["interval"] == "W"
+
+
+@pytest.mark.asyncio
 async def test_fetch_klines_bybit_interval_mapping_for_hours():
     session = _FakeSession(BYBIT_RAW_KLINES)
     await market_data.fetch_klines(session, "Bybit", "BTCUSDT", "1h", limit=2)
