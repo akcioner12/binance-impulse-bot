@@ -72,3 +72,51 @@ def rsi(values: list[float], period: int = 14) -> list[float | None]:
         result[i + 1] = _rsi_from_averages(avg_gain, avg_loss)
 
     return result
+
+
+def find_local_peaks(values: list[float], window: int = 3) -> list[int]:
+    """Индексы локальных максимумов: значение — максимум в окне ±window вокруг себя."""
+    peaks = []
+    for i in range(window, len(values) - window):
+        segment = values[i - window:i + window + 1]
+        if values[i] == max(segment):
+            peaks.append(i)
+    return peaks
+
+
+def find_local_troughs(values: list[float], window: int = 3) -> list[int]:
+    """Индексы локальных минимумов: значение — минимум в окне ±window вокруг себя."""
+    troughs = []
+    for i in range(window, len(values) - window):
+        segment = values[i - window:i + window + 1]
+        if values[i] == min(segment):
+            troughs.append(i)
+    return troughs
+
+
+def detect_bearish_divergence(closes: list[float], rsi_values: list, window: int = 3) -> bool:
+    """
+    Медвежья дивергенция: цена сделала новый хай, а RSI на этом хае — ниже,
+    чем на предыдущем хае (ослабление импульса вверх — сигнал разворота вниз).
+    """
+    peaks = [i for i in find_local_peaks(closes, window) if rsi_values[i] is not None]
+    if len(peaks) < 2:
+        return False
+    i1, i2 = peaks[-2], peaks[-1]
+    if closes[i2] <= closes[i1]:
+        return False
+    return rsi_values[i2] < rsi_values[i1]
+
+
+def detect_bullish_divergence(closes: list[float], rsi_values: list, window: int = 3) -> bool:
+    """
+    Бычья дивергенция: цена сделала новый лой, а RSI на этом лое — выше,
+    чем на предыдущем лое (ослабление импульса вниз — сигнал разворота вверх).
+    """
+    troughs = [i for i in find_local_troughs(closes, window) if rsi_values[i] is not None]
+    if len(troughs) < 2:
+        return False
+    i1, i2 = troughs[-2], troughs[-1]
+    if closes[i2] >= closes[i1]:
+        return False
+    return rsi_values[i2] > rsi_values[i1]
