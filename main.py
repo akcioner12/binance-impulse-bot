@@ -137,9 +137,11 @@ async def _run_autotrading_for_admin(
     """
     try:
         async with aiohttp.ClientSession() as session:
-            await live_trading.handle_new_impulse(
+            result = await live_trading.handle_new_impulse(
                 session, ADMIN_CHAT_ID, symbol, exchange, direction, current_price, window_start_price
             )
+        if result is not None:
+            logger.info(f"Автотрейдинг [{symbol}]: сетап найден, классификация={result['classification']}, signal_id={result['signal_id']}")
     except Exception as e:
         logger.error(f"Автотрейдинг: ошибка обработки импульса {symbol} [{exchange}]: {e}")
 
