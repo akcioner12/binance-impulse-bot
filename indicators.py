@@ -120,3 +120,36 @@ def detect_bullish_divergence(closes: list[float], rsi_values: list, window: int
     if closes[i2] >= closes[i1]:
         return False
     return rsi_values[i2] > rsi_values[i1]
+
+
+def average_volume(candles: list[dict], lookback: int = 20, exclude_last: bool = True) -> float:
+    """Средний объём за последние `lookback` свечей (по умолчанию не считая самую последнюю)."""
+    series = candles[:-1] if exclude_last and len(candles) > 1 else candles
+    series = series[-lookback:]
+    if not series:
+        return 0.0
+    return sum(c["volume"] for c in series) / len(series)
+
+
+def is_climax_candle(
+    candle: dict, avg_volume: float, volume_multiplier: float = 3.0, wick_ratio: float = 0.5
+) -> bool:
+    """
+    True, если у свечи аномально высокий объём (>= volume_multiplier * avg_volume)
+    И длинный фитиль-отбой (доля самого длинного фитиля от полного диапазона >= wick_ratio) —
+    признак истощения манипулятивного движения (climax reversal).
+    """
+    if avg_volume <= 0:
+        return False
+    if candle["volume"] < avg_volume * volume_multiplier:
+        return False
+
+    full_range = candle["high"] - candle["low"]
+    if full_range <= 0:
+        return False
+
+    upper_wick = candle["high"] - max(candle["open"], candle["close"])
+    lower_wick = min(candle["open"], candle["close"]) - candle["low"]
+    max_wick = max(upper_wick, lower_wick)
+
+    return (max_wick / full_range) >= wick_ratio
