@@ -113,3 +113,22 @@ async def send_text(session: aiohttp.ClientSession, chat_id: int, text: str):
         "text": text,
         "parse_mode": "Markdown",
     })
+
+
+async def send_text_with_keyboard(
+    session: aiohttp.ClientSession, chat_id: int, text: str, keyboard: list[list[dict]]
+) -> dict | None:
+    """Отправляет сообщение с inline-клавиатурой (для онбординга и аварийных кнопок)."""
+    return await _api_call(session, "sendMessage", {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown",
+        "reply_markup": {"inline_keyboard": keyboard},
+    })
+
+
+async def answer_callback_query(session: aiohttp.ClientSession, callback_query_id: str):
+    """Подтверждает получение нажатия inline-кнопки (убирает 'часики' в Telegram)."""
+    await _api_call(session, "answerCallbackQuery", {
+        "callback_query_id": callback_query_id,
+    })
