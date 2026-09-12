@@ -121,3 +121,17 @@ class ChandelierTrailingStop:
         if self.direction == "long":
             return price <= self.stop_price
         return price >= self.stop_price
+
+
+def calculate_position_size(balance: float, risk_percent: float, entry_price: float, stop_loss: float) -> float:
+    """
+    Размер позиции в единицах базового актива (например, BTC для BTCUSDT),
+    рассчитанный так, чтобы срабатывание SL дало убыток ровно risk_percent%
+    от баланса. Не зависит от плеча -- плечо влияет только на требуемую маржу,
+    не на сам PnL при данном размере позиции.
+    """
+    risk_amount = balance * (risk_percent / 100)
+    stop_distance = abs(entry_price - stop_loss)
+    if stop_distance == 0:
+        return 0.0
+    return risk_amount / stop_distance
