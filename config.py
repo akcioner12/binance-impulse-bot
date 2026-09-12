@@ -27,6 +27,11 @@ DAILY_REPORT_TOP_N      = int(os.getenv("DAILY_REPORT_TOP_N", "10"))
 # --- Прочее ---
 DB_PATH = os.getenv("DB_PATH", "bot_state.db")
 
+# --- Шифрование API-ключей бирж ---
+# Ключ для Fernet-шифрования API-ключей Binance/Bybit в БД (см. crypto_utils.py).
+# Сгенерировать: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
+
 BINANCE_FUTURES_REST = "https://fapi.binance.com"
 BINANCE_FUTURES_WS   = "wss://fstream.binance.com/market"
 
