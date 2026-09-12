@@ -124,3 +124,26 @@ async def test_analyze_impulse_handles_empty_15m_candles_without_crashing():
 
     assert result["is_climax"] is False
     assert result["relevant_divergence"] is False
+
+
+@pytest.mark.asyncio
+async def test_analyze_impulse_returns_atr_15m_and_atr_1h():
+    candles_15m = [_candle(100 + i) for i in range(50)]
+    candles_1h = [_candle(145.0 + i * (5.0 / 23)) for i in range(24)]
+    candles_4h = [_candle(120 + i) for i in range(30)]
+
+    fake_fetch_klines = _make_fake_fetch_klines({"15m": candles_15m, "1h": candles_1h, "4h": candles_4h})
+
+    with patch("impulse_analysis.market_data.fetch_klines", new=AsyncMock(side_effect=fake_fetch_klines)), \
+         patch("impulse_analysis.market_data.fetch_funding_rate", new=AsyncMock(return_value=0.0001)), \
+         patch("impulse_analysis.market_data.fetch_open_interest_history", new=AsyncMock(return_value=[
+             {"timestamp": 1, "open_interest": 1000.0},
+             {"timestamp": 2, "open_interest": 1010.0},
+         ])):
+        result = await impulse_analysis.analyze_impulse(
+            session=None, symbol="BTCUSDT", exchange="Binance", direction="up", current_price=150.0
+        )
+
+    # Синтетические свечи из _candle() дают постоянный True Range = 2.0 (см. indicators_atr тесты)
+    assert result["atr_15m"] == pytest.approx(2.0)
+    assert result["atr_1h"] is not None

@@ -49,6 +49,12 @@ async def analyze_impulse(
 
     vwap_deviation = indicators.vwap_deviation_pct(candles_1h, current_price)
 
+    atr_15m_values = indicators.atr(candles_15m, period=14)
+    atr_15m = atr_15m_values[-1] if atr_15m_values else None
+
+    atr_1h_values = indicators.atr(candles_1h, period=14)
+    atr_1h = atr_1h_values[-1] if atr_1h_values else None
+
     classification = manipulation_detector.classify_impulse(
         direction=direction,
         trend_4h=trend_4h,
@@ -69,4 +75,6 @@ async def analyze_impulse(
         "oi_diverging": oi_diverging,
         "near_significant_level": near_significant_level,
         "vwap_deviation": vwap_deviation,
+        "atr_15m": atr_15m,
+        "atr_1h": atr_1h,
     }
