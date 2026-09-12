@@ -105,7 +105,31 @@ async def handle_callback(session, chat_id: int, callback_data: str) -> bool:
     if callback_data == "trading_setup:manual":
         await _start_manual_flow(session, chat_id)
         return True
+    if callback_data.startswith("sl_method:"):
+        return await _handle_sl_method_callback(session, chat_id, callback_data.split(":", 1)[1])
+    if callback_data.startswith("tp_split:"):
+        return await _handle_tp_split_preset_callback(session, chat_id, callback_data.split(":", 1)[1])
+    if callback_data.startswith("risk_warn:"):
+        return await _handle_risk_warning_callback(session, chat_id, callback_data.split(":", 1)[1])
     return False
+
+
+async def _handle_sl_method_callback(session, chat_id: int, method: str) -> bool:
+    state = _onboarding.get(chat_id)
+    if state is None or state["step"] != "sl_method":
+        return False
+    if method == "atr":
+        state["data"]["sl_method"] = "atr"
+        state["data"]["sl_fixed_percent"] = None
+        state["step"] = "breakeven_after_tp"
+        await _ask_breakeven_step(session, chat_id)
+    elif method == "fixed":
+        state["data"]["sl_method"] = "fixed_percent"
+        state["step"] = "sl_fixed_percent"
+        await send_text(session, chat_id, "Какой фиксированный % стоп-лосса от средней цены входа?\n\nНапиши цифру:")
+    else:
+        return False
+    return True
 
 
 async def _handle_risk_percent(session, chat_id: int, state: dict, text: str) -> bool:
@@ -157,10 +181,131 @@ async def _handle_leverage(session, chat_id: int, state: dict, text: str) -> boo
     return True
 
 
+async def _handle_sl_fixed_percent(session, chat_id: int, state: dict, text: str) -> bool:
+    value = _parse_positive_float(text)
+    if value is None:
+        await send_text(session, chat_id, "Не похоже на число. Напиши цифру, например: 4")
+        return True
+    state["data"]["sl_fixed_percent"] = value
+    state["step"] = "breakeven_after_tp"
+    await _ask_breakeven_step(session, chat_id)
+    return True
+
+
+async def _ask_breakeven_step(session, chat_id: int):
+    await send_text(
+        session, chat_id,
+        "5️⃣ После какого тейк-профита переносить стоп в безубыток+ "
+        "(покрытие комиссий, не просто ноль)?\n\n"
+        "Рекомендуем: после TP2. Напиши номер тейка (целое число):",
+    )
+
+
+async def _handle_breakeven_after_tp(session, chat_id: int, state: dict, text: str) -> bool:
+    value = _parse_positive_float(text)
+    if value is None or value != int(value):
+        await send_text(session, chat_id, "Нужно целое число тейка, например: 2")
+        return True
+    state["data"]["breakeven_after_tp"] = int(value)
+    state["step"] = "tp_split_preset"
+    await send_text_with_keyboard(
+        session, chat_id,
+        "6️⃣ Как делить позицию между TP1-3? (TP4 — трейлинг, остаток позиции)",
+        [
+            [{"text": "⚖️ Поровну  25/25/25", "callback_data": "tp_split:equal"}],
+            [{"text": "🛡 Консервативно  40/30/20", "callback_data": "tp_split:conservative"}],
+            [{"text": "🚀 Агрессивно  15/20/25", "callback_data": "tp_split:aggressive"}],
+        ],
+    )
+    return True
+
+
+def _find_risk_warnings(data: dict) -> dict:
+    """Возвращает {поле: (значение, порог)} для полей, превышающих консервативные границы."""
+    warnings = {}
+    for field, threshold in RISK_WARNING_THRESHOLDS.items():
+        value = data.get(field)
+        if value is not None and value > threshold:
+            warnings[field] = (value, threshold)
+    return warnings
+
+
+_FIELD_LABELS = {
+    "risk_percent": "риск на сделку",
+    "leverage": "плечо",
+    "daily_loss_limit_percent": "дневной лимит убытка",
+}
+
+
+async def _save_profile_from_data(chat_id: int, data: dict):
+    trading_storage.save_profile(
+        chat_id=chat_id,
+        risk_percent=data["risk_percent"],
+        daily_loss_limit_percent=data["daily_loss_limit_percent"],
+        leverage=data["leverage"],
+        sl_method=data["sl_method"],
+        sl_fixed_percent=data.get("sl_fixed_percent"),
+        breakeven_after_tp=data["breakeven_after_tp"],
+        tp_split_preset=data["tp_split_preset"],
+        max_concurrent_trades=DEFAULT_PROFILE["max_concurrent_trades"],
+    )
+
+
+async def _ask_first_api_key_step(session, chat_id: int, state: dict):
+    state["step"] = "api_binance_key"
+    await send_text(
+        session, chat_id,
+        "🔑 Теперь укажи API-ключ Binance Futures (без прав вывода средств, "
+        "только торговля). Пришли ключ отдельным сообщением:",
+    )
+
+
+async def _handle_tp_split_preset_callback(session, chat_id: int, preset: str) -> bool:
+    state = _onboarding.get(chat_id)
+    if state is None or state["step"] != "tp_split_preset":
+        return False
+    state["data"]["tp_split_preset"] = preset
+    warnings = _find_risk_warnings(state["data"])
+    if warnings:
+        state["step"] = "risk_warning_confirm"
+        lines = [
+            f"⚠️ {_FIELD_LABELS[field]}: {value:g} (рекомендуем не выше {threshold:g})"
+            for field, (value, threshold) in warnings.items()
+        ]
+        await send_text_with_keyboard(
+            session, chat_id,
+            "⚠️ *Обнаружен повышенный риск в твоих настройках:*\n\n" + "\n".join(lines) +
+            "\n\nПонизить до рекомендуемых значений, или оставить как есть?",
+            [
+                [{"text": "✅ Применить рекомендации", "callback_data": "risk_warn:apply_recommended"}],
+                [{"text": "➡️ Оставить как есть", "callback_data": "risk_warn:keep_mine"}],
+            ],
+        )
+        return True
+    await _save_profile_from_data(chat_id, state["data"])
+    await _ask_first_api_key_step(session, chat_id, state)
+    return True
+
+
+async def _handle_risk_warning_callback(session, chat_id: int, choice: str) -> bool:
+    state = _onboarding.get(chat_id)
+    if state is None or state["step"] != "risk_warning_confirm":
+        return False
+    if choice == "apply_recommended":
+        for field, threshold in RISK_WARNING_THRESHOLDS.items():
+            if state["data"].get(field, 0) > threshold:
+                state["data"][field] = threshold
+    await _save_profile_from_data(chat_id, state["data"])
+    await _ask_first_api_key_step(session, chat_id, state)
+    return True
+
+
 _TEXT_STEP_HANDLERS = {
     "risk_percent": _handle_risk_percent,
     "daily_loss_limit_percent": _handle_daily_loss_limit,
     "leverage": _handle_leverage,
+    "sl_fixed_percent": _handle_sl_fixed_percent,
+    "breakeven_after_tp": _handle_breakeven_after_tp,
 }
 
 
