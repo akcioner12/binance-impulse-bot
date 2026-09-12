@@ -27,15 +27,12 @@ async def test_reversal_creates_pending_setup_with_both_triggers():
     async def fake_fetch_klines(session, exchange, symbol, interval, limit=100):
         return []  # магнит-уровни на пустой истории -> просто пустой список уровней
 
-    with patch("live_trading.trading_storage.get_profile", return_value=REVERSAL_PROFILE), \
-         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
-         patch("live_trading.trading_storage.get_paper_balance", return_value=1000.0), \
-         patch("live_trading.trading_storage.create_trade_signal", return_value=55), \
-         patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(return_value=ANALYSIS_RESULT_REVERSAL)), \
+    with patch("live_trading.trading_storage.get_paper_balance", return_value=1000.0), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=fake_fetch_klines)):
-        result = await live_trading.handle_new_impulse(
-            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
-            direction="up", current_price=100.0, window_start_price=70.0,
+        result = await live_trading.execute_setup(
+            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="up",
+            classification="reversal", current_price=100.0, window_start_price=70.0,
+            profile=REVERSAL_PROFILE, analysis=ANALYSIS_RESULT_REVERSAL, signal_id=55,
         )
 
     assert result["classification"] == "reversal"

@@ -15,6 +15,7 @@ import entry_engine
 import position_manager
 import order_executor
 import market_data
+import trade_signal_ux
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +36,7 @@ async def handle_new_impulse(
     profile = trading_storage.get_profile(chat_id)
     if profile is None or not profile["is_active"]:
         return None
-    if symbol in _pending_setups or symbol in _open_positions:
+    if symbol in _pending_setups or symbol in _open_positions or trade_signal_ux.is_awaiting_confirmation(symbol):
         return None
     if len(trading_storage.get_open_positions(chat_id)) >= profile["max_concurrent_trades"]:
         return None
@@ -48,11 +49,26 @@ async def handle_new_impulse(
         impulse_direction=direction, classification=classification,
     )
 
+    await trade_signal_ux.request_confirmation(
+        session, chat_id, symbol, exchange, direction, classification,
+        current_price, window_start_price, profile, analysis, signal_id,
+        magnet_levels=[], execute_fn=execute_setup,
+    )
+    return {"classification": classification, "signal_id": signal_id, "awaiting_confirmation": True}
+
+
+async def execute_setup(
+    session, chat_id: int, symbol: str, exchange: str, direction: str, classification: str,
+    current_price: float, window_start_price: float, profile: dict, analysis: dict, signal_id: int,
+) -> dict:
+    """
+    Реально исполняет сетап -- вызывается из trade_signal_ux после подтверждения
+    (кнопкой или по таймауту), НЕ напрямую из handle_new_impulse().
+    """
     if classification == "continuation":
         return await _open_continuation_position(
             chat_id, symbol, exchange, direction, current_price, profile, analysis, signal_id
         )
-
     return await _create_pending_reversal_setup(
         session, chat_id, symbol, exchange, direction, current_price,
         window_start_price, profile, analysis, signal_id,

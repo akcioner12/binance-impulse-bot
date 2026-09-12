@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import AsyncMock, patch
+from unittest.mock import patch
 
 import live_trading
 
@@ -24,16 +24,13 @@ ANALYSIS_RESULT_CONTINUATION = {
 
 @pytest.mark.asyncio
 async def test_continuation_opens_position_immediately():
-    with patch("live_trading.trading_storage.get_profile", return_value=CONTINUATION_PROFILE), \
-         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
-         patch("live_trading.trading_storage.get_paper_balance", return_value=1000.0), \
-         patch("live_trading.trading_storage.create_trade_signal", return_value=42), \
+    with patch("live_trading.trading_storage.get_paper_balance", return_value=1000.0), \
          patch("live_trading.trading_storage.update_trade_signal_status") as mock_update_status, \
-         patch("live_trading.trading_storage.create_position", return_value=7), \
-         patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(return_value=ANALYSIS_RESULT_CONTINUATION)):
-        result = await live_trading.handle_new_impulse(
-            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
-            direction="up", current_price=100.0, window_start_price=70.0,
+         patch("live_trading.trading_storage.create_position", return_value=7):
+        result = await live_trading.execute_setup(
+            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="up",
+            classification="continuation", current_price=100.0, window_start_price=70.0,
+            profile=CONTINUATION_PROFILE, analysis=ANALYSIS_RESULT_CONTINUATION, signal_id=42,
         )
 
     assert result["classification"] == "continuation"
@@ -46,18 +43,13 @@ async def test_continuation_opens_position_immediately():
 
 @pytest.mark.asyncio
 async def test_continuation_short_direction_for_down_impulse():
-    with patch("live_trading.trading_storage.get_profile", return_value=CONTINUATION_PROFILE), \
-         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
-         patch("live_trading.trading_storage.get_paper_balance", return_value=1000.0), \
-         patch("live_trading.trading_storage.create_trade_signal", return_value=43), \
+    with patch("live_trading.trading_storage.get_paper_balance", return_value=1000.0), \
          patch("live_trading.trading_storage.update_trade_signal_status"), \
-         patch("live_trading.trading_storage.create_position", return_value=8), \
-         patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
-             return_value={**ANALYSIS_RESULT_CONTINUATION, "classification": "continuation"}
-         )):
-        result = await live_trading.handle_new_impulse(
-            session=None, chat_id=111, symbol="ETHUSDT", exchange="Binance",
-            direction="down", current_price=100.0, window_start_price=140.0,
+         patch("live_trading.trading_storage.create_position", return_value=8):
+        await live_trading.execute_setup(
+            session=None, chat_id=111, symbol="ETHUSDT", exchange="Binance", direction="down",
+            classification="continuation", current_price=100.0, window_start_price=140.0,
+            profile=CONTINUATION_PROFILE, analysis=ANALYSIS_RESULT_CONTINUATION, signal_id=43,
         )
 
     state = live_trading._open_positions["ETHUSDT"]["state"]
