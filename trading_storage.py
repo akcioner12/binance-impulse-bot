@@ -110,6 +110,49 @@ def save_api_credentials(chat_id: int, exchange: str, api_key: str, api_secret: 
         conn.commit()
 
 
+def init_paper_trading_db():
+    with get_conn() as conn:
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS paper_balance (
+                chat_id INTEGER PRIMARY KEY,
+                balance REAL NOT NULL,
+                updated_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+    logger.info("Таблицы paper-trading инициализированы")
+
+
+def init_paper_balance(chat_id: int, starting_balance: float):
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT OR IGNORE INTO paper_balance (chat_id, balance) VALUES (?, ?)",
+            (chat_id, starting_balance),
+        )
+        conn.commit()
+
+
+def get_paper_balance(chat_id: int) -> float | None:
+    with get_conn() as conn:
+        row = conn.execute(
+            "SELECT balance FROM paper_balance WHERE chat_id = ?", (chat_id,)
+        ).fetchone()
+        return row["balance"] if row else None
+
+
+def adjust_paper_balance(chat_id: int, delta: float) -> float:
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE paper_balance SET balance = balance + ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?",
+            (delta, chat_id),
+        )
+        conn.commit()
+        row = conn.execute(
+            "SELECT balance FROM paper_balance WHERE chat_id = ?", (chat_id,)
+        ).fetchone()
+        return row["balance"]
+
+
 def get_api_credentials(chat_id: int, exchange: str) -> dict | None:
     with get_conn() as conn:
         row = conn.execute(
