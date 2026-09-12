@@ -40,4 +40,47 @@ async def handle_new_impulse(
     if len(trading_storage.get_open_positions(chat_id)) >= profile["max_concurrent_trades"]:
         return None
 
-    return None  # ветки classification реализуются в Task 3-4
+    analysis = await impulse_analysis.analyze_impulse(session, symbol, exchange, direction, current_price)
+    classification = analysis["classification"]
+
+    signal_id = trading_storage.create_trade_signal(
+        chat_id=chat_id, symbol=symbol, exchange=exchange,
+        impulse_direction=direction, classification=classification,
+    )
+
+    if classification == "continuation":
+        return await _open_continuation_position(
+            chat_id, symbol, exchange, direction, current_price, profile, analysis, signal_id
+        )
+
+    return None  # ветка reversal реализуется в Task 4
+
+
+async def _open_continuation_position(
+    chat_id: int, symbol: str, exchange: str, direction: str, current_price: float,
+    profile: dict, analysis: dict, signal_id: int,
+) -> dict:
+    trade_direction = position_manager.determine_trade_direction(direction, "continuation")
+    stop_loss = position_manager.calculate_stop_loss(
+        current_price, trade_direction, profile["sl_method"],
+        analysis["atr_1h"], DEFAULT_ATR_MULTIPLIER, profile["sl_fixed_percent"],
+    )
+    balance = trading_storage.get_paper_balance(chat_id) or 0.0
+    size = position_manager.calculate_position_size(balance, profile["risk_percent"], current_price, stop_loss)
+
+    result = order_executor.open_paper_position(
+        chat_id=chat_id, symbol=symbol, exchange=exchange, direction=trade_direction,
+        fills=[(current_price, size)], sl_method=profile["sl_method"],
+        atr_1h=analysis["atr_1h"], atr_multiplier=DEFAULT_ATR_MULTIPLIER,
+        fixed_percent=profile["sl_fixed_percent"], tp_split_preset=profile["tp_split_preset"],
+    )
+    state = order_executor.OpenPositionState(
+        position_id=result["position_id"], direction=trade_direction,
+        avg_entry_price=result["avg_entry_price"], quantity=result["quantity"],
+        stop_loss=result["stop_loss"], take_profits=result["take_profits"],
+        breakeven_after_tp=profile["breakeven_after_tp"],
+    )
+    _open_positions[symbol] = {"chat_id": chat_id, "state": state, "atr_1h": analysis["atr_1h"]}
+    trading_storage.update_trade_signal_status(signal_id, "executed")
+
+    return {"classification": "continuation", "signal_id": signal_id, "position_id": result["position_id"]}
