@@ -24,7 +24,7 @@ import time
 
 import aiohttp
 
-from config import SYMBOLS_REFRESH_SEC
+from config import SYMBOLS_REFRESH_SEC, ADMIN_CHAT_ID, IMPULSE_START_THRESHOLD
 from fetcher import get_tradable_symbols
 from bybit_fetcher import get_bybit_tradable_symbols
 from analyzer import PriceWindowTracker
@@ -97,6 +97,12 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
         updated_at=ts,
     )
 
+    if signal.level == IMPULSE_START_THRESHOLD:
+        asyncio.create_task(_run_autotrading_for_admin(
+            signal.symbol, signal.exchange, signal.direction,
+            signal.current_price, signal.window_start_price,
+        ))
+
     subscribers = get_all_subscribers()
     if not subscribers:
         logger.info(f"Сигнал {signal.symbol} ({signal.exchange}) {signal.direction} {signal.level}% — нет подписчиков")
@@ -117,6 +123,24 @@ async def on_binance_kline(symbol: str, price: float, ts: int):
 
 async def on_bybit_kline(symbol: str, price: float, ts: int):
     await on_kline_close(symbol, "Bybit", price, ts)
+
+
+async def _run_autotrading_for_admin(
+    symbol: str, exchange: str, direction: str, current_price: float, window_start_price: float
+):
+    """
+    Запускается фоновой задачей (asyncio.create_task) -- НЕ блокирует обработку
+    тиков других символов. Любая ошибка здесь логируется и не должна влиять
+    на рассылку текстовых алертов подписчикам -- автотрейдинг полностью
+    изолирован от основного пути обработки тиков.
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            await live_trading.handle_new_impulse(
+                session, ADMIN_CHAT_ID, symbol, exchange, direction, current_price, window_start_price
+            )
+    except Exception as e:
+        logger.error(f"Автотрейдинг: ошибка обработки импульса {symbol} [{exchange}]: {e}")
 
 
 async def fetch_current_symbol_lists() -> tuple[list[str], list[str]]:
