@@ -111,6 +111,8 @@ async def handle_callback(session, chat_id: int, callback_data: str) -> bool:
         return await _handle_tp_split_preset_callback(session, chat_id, callback_data.split(":", 1)[1])
     if callback_data.startswith("risk_warn:"):
         return await _handle_risk_warning_callback(session, chat_id, callback_data.split(":", 1)[1])
+    if callback_data.startswith("add_bybit:"):
+        return await _handle_add_bybit_callback(session, chat_id, callback_data.split(":", 1)[1])
     return False
 
 
@@ -300,12 +302,70 @@ async def _handle_risk_warning_callback(session, chat_id: int, choice: str) -> b
     return True
 
 
+async def _handle_api_binance_key(session, chat_id: int, state: dict, text: str) -> bool:
+    state["data"]["binance_api_key"] = text.strip()
+    state["step"] = "api_binance_secret"
+    await send_text(session, chat_id, "Теперь API-секрет Binance:")
+    return True
+
+
+async def _handle_api_binance_secret(session, chat_id: int, state: dict, text: str) -> bool:
+    trading_storage.save_api_credentials(
+        chat_id, "binance", state["data"]["binance_api_key"], text.strip()
+    )
+    state["step"] = "add_bybit_choice"
+    await send_text_with_keyboard(
+        session, chat_id,
+        "Ключ Binance сохранён ✅\n\nДобавить также API-ключ Bybit Futures?",
+        [
+            [{"text": "➕ Добавить Bybit", "callback_data": "add_bybit:yes"}],
+            [{"text": "➡️ Пропустить", "callback_data": "add_bybit:no"}],
+        ],
+    )
+    return True
+
+
+async def _handle_api_bybit_key(session, chat_id: int, state: dict, text: str) -> bool:
+    state["data"]["bybit_api_key"] = text.strip()
+    state["step"] = "api_bybit_secret"
+    await send_text(session, chat_id, "Теперь API-секрет Bybit:")
+    return True
+
+
+async def _handle_api_bybit_secret(session, chat_id: int, state: dict, text: str) -> bool:
+    trading_storage.save_api_credentials(
+        chat_id, "bybit", state["data"]["bybit_api_key"], text.strip()
+    )
+    del _onboarding[chat_id]
+    await send_text(session, chat_id, "Ключ Bybit сохранён ✅\n\n🎉 Автотрейдинг готов к работе.")
+    return True
+
+
+async def _handle_add_bybit_callback(session, chat_id: int, choice: str) -> bool:
+    state = _onboarding.get(chat_id)
+    if state is None or state["step"] != "add_bybit_choice":
+        return False
+    if choice == "yes":
+        state["step"] = "api_bybit_key"
+        await send_text(session, chat_id, "🔑 Укажи API-ключ Bybit Futures:")
+        return True
+    if choice == "no":
+        del _onboarding[chat_id]
+        await send_text(session, chat_id, "🎉 Автотрейдинг готов к работе.")
+        return True
+    return False
+
+
 _TEXT_STEP_HANDLERS = {
     "risk_percent": _handle_risk_percent,
     "daily_loss_limit_percent": _handle_daily_loss_limit,
     "leverage": _handle_leverage,
     "sl_fixed_percent": _handle_sl_fixed_percent,
     "breakeven_after_tp": _handle_breakeven_after_tp,
+    "api_binance_key": _handle_api_binance_key,
+    "api_binance_secret": _handle_api_binance_secret,
+    "api_bybit_key": _handle_api_bybit_key,
+    "api_bybit_secret": _handle_api_bybit_secret,
 }
 
 
