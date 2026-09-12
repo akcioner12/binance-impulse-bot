@@ -79,7 +79,7 @@ async def test_breakeven_after_tp_rejects_non_integer():
 
 
 @pytest.mark.asyncio
-async def test_tp_split_preset_with_safe_values_goes_straight_to_api_key():
+async def test_tp_split_preset_with_safe_values_goes_straight_to_exchange_choice():
     ob._onboarding[111] = {
         "step": "tp_split_preset",
         "data": {
@@ -87,14 +87,14 @@ async def test_tp_split_preset_with_safe_values_goes_straight_to_api_key():
             "sl_method": "atr", "sl_fixed_percent": None, "breakeven_after_tp": 2,
         },
     }
-    with patch("trading_onboarding.send_text", new=AsyncMock()):
+    with patch("trading_onboarding.send_text_with_keyboard", new=AsyncMock()):
         handled = await ob.handle_callback(None, 111, "tp_split:equal")
 
     assert handled is True
     profile = trading_storage.get_profile(111)
     assert profile is not None
     assert profile["tp_split_preset"] == "equal"
-    assert ob._onboarding[111]["step"] == "api_binance_key"
+    assert ob._onboarding[111]["step"] == "exchange_choice"
 
 
 @pytest.mark.asyncio
@@ -128,13 +128,13 @@ async def test_risk_warning_keep_mine_saves_original_values():
             "tp_split_preset": "equal",
         },
     }
-    with patch("trading_onboarding.send_text", new=AsyncMock()):
+    with patch("trading_onboarding.send_text_with_keyboard", new=AsyncMock()):
         handled = await ob.handle_callback(None, 222, "risk_warn:keep_mine")
 
     assert handled is True
     profile = trading_storage.get_profile(222)
     assert profile["risk_percent"] == 5.0
-    assert ob._onboarding[222]["step"] == "api_binance_key"
+    assert ob._onboarding[222]["step"] == "exchange_choice"
 
 
 @pytest.mark.asyncio
@@ -147,7 +147,7 @@ async def test_risk_warning_apply_recommended_clamps_flagged_fields():
             "tp_split_preset": "equal",
         },
     }
-    with patch("trading_onboarding.send_text", new=AsyncMock()):
+    with patch("trading_onboarding.send_text_with_keyboard", new=AsyncMock()):
         handled = await ob.handle_callback(None, 222, "risk_warn:apply_recommended")
 
     assert handled is True

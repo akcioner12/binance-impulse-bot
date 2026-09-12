@@ -24,9 +24,8 @@ async def test_start_trading_setup_sends_two_buttons():
 
 
 @pytest.mark.asyncio
-async def test_defaults_callback_saves_default_profile_and_asks_for_api_key():
-    with patch("trading_onboarding.send_text_with_keyboard", new=AsyncMock()), \
-         patch("trading_onboarding.send_text", new=AsyncMock()) as mock_send_text:
+async def test_defaults_callback_saves_default_profile_and_asks_exchange_choice():
+    with patch("trading_onboarding.send_text_with_keyboard", new=AsyncMock()) as mock_send_kb:
         handled = await ob.handle_callback(None, 111, "trading_setup:defaults")
 
     assert handled is True
@@ -35,9 +34,9 @@ async def test_defaults_callback_saves_default_profile_and_asks_for_api_key():
     assert profile["leverage"] == ob.DEFAULT_PROFILE["leverage"]
     assert profile["daily_loss_limit_percent"] == ob.DEFAULT_PROFILE["daily_loss_limit_percent"]
     assert profile["max_concurrent_trades"] == ob.DEFAULT_PROFILE["max_concurrent_trades"]
-    # После дефолтов сразу переходим к запросу API-ключа
-    assert ob._onboarding[111]["step"] == "api_binance_key"
-    mock_send_text.assert_called_once()
+    # После дефолтов сразу переходим к выбору биржи (юзер сам решает, с какой начать)
+    assert ob._onboarding[111]["step"] == "exchange_choice"
+    mock_send_kb.assert_called_once()
 
 
 @pytest.mark.asyncio

@@ -4,8 +4,15 @@ Telegram-онбординг профиля автотрейдинга.
 Флоу: /trading_setup -> [Рекомендуемые параметры] или [Настроить вручную]
 Ручной путь: риск% -> дневной лимит убытка% -> плечо -> метод SL ->
              после какого TP безубыток+ -> деление TP1-3 -> (предупреждение
-             о риске, если нужно) -> API-ключ(и) биржи -> готово.
-Дефолтный путь: сразу сохраняет DEFAULT_PROFILE, дальше только API-ключ(и).
+             о риске, если нужно) -> выбор биржи -> ключ+секрет -> (добавить
+             вторую биржу? да/нет) -> готово.
+Дефолтный путь: сразу сохраняет DEFAULT_PROFILE, дальше только выбор биржи.
+
+Пользователь сам выбирает, с какой биржи начать (Binance или Bybit) -- это
+важно, т.к. Binance недоступен в России и часть пользователей пользуется
+только Bybit. После ввода ключей первой выбранной биржи бот предлагает
+кнопкой добавить и вторую (с возможностью пропустить кнопкой, без ввода
+текста).
 
 Состояние диалога хранится в памяти (как _onboarding в tg-forex-signal-monitor) —
 теряется при рестарте бота, пользователь просто начинает заново командой /trading_setup.
@@ -70,6 +77,9 @@ async def start_trading_setup(session, chat_id: int):
     )
 
 
+_EXCHANGE_LABELS = {"binance": "Binance", "bybit": "Bybit"}
+
+
 async def _apply_defaults_and_ask_api_key(session, chat_id: int):
     trading_storage.save_profile(
         chat_id=chat_id,
@@ -82,13 +92,9 @@ async def _apply_defaults_and_ask_api_key(session, chat_id: int):
         tp_split_preset=DEFAULT_PROFILE["tp_split_preset"],
         max_concurrent_trades=DEFAULT_PROFILE["max_concurrent_trades"],
     )
-    _onboarding[chat_id] = {"step": "api_binance_key", "data": {}}
-    await send_text(
-        session, chat_id,
-        "Параметры сохранены ✅\n\n"
-        "🔑 Теперь укажи API-ключ Binance Futures (без прав вывода средств, "
-        "только торговля). Пришли ключ отдельным сообщением:",
-    )
+    state = {"step": "risk_percent", "data": {}}
+    _onboarding[chat_id] = state
+    await _ask_exchange_choice_step(session, chat_id, state, prefix="Параметры сохранены ✅\n\n")
 
 
 async def _start_manual_flow(session, chat_id: int):
@@ -113,8 +119,10 @@ async def handle_callback(session, chat_id: int, callback_data: str) -> bool:
         return await _handle_tp_split_preset_callback(session, chat_id, callback_data.split(":", 1)[1])
     if callback_data.startswith("risk_warn:"):
         return await _handle_risk_warning_callback(session, chat_id, callback_data.split(":", 1)[1])
-    if callback_data.startswith("add_bybit:"):
-        return await _handle_add_bybit_callback(session, chat_id, callback_data.split(":", 1)[1])
+    if callback_data.startswith("exchange_choice:"):
+        return await _handle_exchange_choice_callback(session, chat_id, callback_data.split(":", 1)[1])
+    if callback_data.startswith("add_other_exchange:"):
+        return await _handle_add_other_exchange_callback(session, chat_id, callback_data.split(":", 1)[1])
     return False
 
 
@@ -268,12 +276,16 @@ async def _save_profile_from_data(chat_id: int, data: dict):
     )
 
 
-async def _ask_first_api_key_step(session, chat_id: int, state: dict):
-    state["step"] = "api_binance_key"
-    await send_text(
+async def _ask_exchange_choice_step(session, chat_id: int, state: dict, prefix: str = ""):
+    state["step"] = "exchange_choice"
+    await send_text_with_keyboard(
         session, chat_id,
-        "🔑 Теперь укажи API-ключ Binance Futures (без прав вывода средств, "
-        "только торговля). Пришли ключ отдельным сообщением:",
+        prefix + "🏦 С какой биржи начать настройку?\n\n"
+        "Binance сейчас недоступен в России — если это твой случай, выбирай Bybit.",
+        [
+            [{"text": "🟡 Binance", "callback_data": "exchange_choice:binance"}],
+            [{"text": "⚫ Bybit", "callback_data": "exchange_choice:bybit"}],
+        ],
     )
 
 
@@ -300,7 +312,7 @@ async def _handle_tp_split_preset_callback(session, chat_id: int, preset: str) -
         )
         return True
     await _save_profile_from_data(chat_id, state["data"])
-    await _ask_first_api_key_step(session, chat_id, state)
+    await _ask_exchange_choice_step(session, chat_id, state)
     return True
 
 
@@ -313,57 +325,73 @@ async def _handle_risk_warning_callback(session, chat_id: int, choice: str) -> b
             if state["data"].get(field, 0) > threshold:
                 state["data"][field] = threshold
     await _save_profile_from_data(chat_id, state["data"])
-    await _ask_first_api_key_step(session, chat_id, state)
+    await _ask_exchange_choice_step(session, chat_id, state)
     return True
 
 
-async def _handle_api_binance_key(session, chat_id: int, state: dict, text: str) -> bool:
-    state["data"]["binance_api_key"] = text.strip()
-    state["step"] = "api_binance_secret"
-    await send_text(session, chat_id, "Теперь API-секрет Binance:")
-    return True
-
-
-async def _handle_api_binance_secret(session, chat_id: int, state: dict, text: str) -> bool:
-    trading_storage.save_api_credentials(
-        chat_id, "binance", state["data"]["binance_api_key"], text.strip()
+async def _handle_exchange_choice_callback(session, chat_id: int, exchange: str) -> bool:
+    state = _onboarding.get(chat_id)
+    if state is None or state["step"] != "exchange_choice":
+        return False
+    if exchange not in _EXCHANGE_LABELS:
+        return False
+    state["data"]["current_exchange"] = exchange
+    state["data"]["is_second_exchange"] = False
+    state["step"] = "api_key"
+    await send_text(
+        session, chat_id,
+        f"🔑 Укажи API-ключ {_EXCHANGE_LABELS[exchange]} Futures (без прав вывода средств, "
+        "только торговля). Пришли ключ отдельным сообщением:",
     )
-    state["step"] = "add_bybit_choice"
+    return True
+
+
+async def _handle_api_key(session, chat_id: int, state: dict, text: str) -> bool:
+    exchange = state["data"]["current_exchange"]
+    state["data"]["api_key"] = text.strip()
+    state["step"] = "api_secret"
+    await send_text(session, chat_id, f"Теперь API-секрет {_EXCHANGE_LABELS[exchange]}:")
+    return True
+
+
+async def _handle_api_secret(session, chat_id: int, state: dict, text: str) -> bool:
+    exchange = state["data"]["current_exchange"]
+    trading_storage.save_api_credentials(chat_id, exchange, state["data"]["api_key"], text.strip())
+
+    if state["data"]["is_second_exchange"]:
+        del _onboarding[chat_id]
+        trading_storage.init_paper_balance(chat_id, DEFAULT_PAPER_BALANCE)
+        await send_text(
+            session, chat_id,
+            f"Ключ {_EXCHANGE_LABELS[exchange]} сохранён ✅\n\n🎉 Автотрейдинг готов к работе.",
+        )
+        return True
+
+    other = "bybit" if exchange == "binance" else "binance"
+    state["data"]["other_exchange"] = other
+    state["step"] = "add_other_exchange_choice"
     await send_text_with_keyboard(
         session, chat_id,
-        "Ключ Binance сохранён ✅\n\nДобавить также API-ключ Bybit Futures?",
+        f"Ключ {_EXCHANGE_LABELS[exchange]} сохранён ✅\n\nДобавить также API-ключ "
+        f"{_EXCHANGE_LABELS[other]} Futures?",
         [
-            [{"text": "➕ Добавить Bybit", "callback_data": "add_bybit:yes"}],
-            [{"text": "➡️ Пропустить", "callback_data": "add_bybit:no"}],
+            [{"text": f"➕ Добавить {_EXCHANGE_LABELS[other]}", "callback_data": "add_other_exchange:yes"}],
+            [{"text": "➡️ Пропустить", "callback_data": "add_other_exchange:no"}],
         ],
     )
     return True
 
 
-async def _handle_api_bybit_key(session, chat_id: int, state: dict, text: str) -> bool:
-    state["data"]["bybit_api_key"] = text.strip()
-    state["step"] = "api_bybit_secret"
-    await send_text(session, chat_id, "Теперь API-секрет Bybit:")
-    return True
-
-
-async def _handle_api_bybit_secret(session, chat_id: int, state: dict, text: str) -> bool:
-    trading_storage.save_api_credentials(
-        chat_id, "bybit", state["data"]["bybit_api_key"], text.strip()
-    )
-    del _onboarding[chat_id]
-    trading_storage.init_paper_balance(chat_id, DEFAULT_PAPER_BALANCE)
-    await send_text(session, chat_id, "Ключ Bybit сохранён ✅\n\n🎉 Автотрейдинг готов к работе.")
-    return True
-
-
-async def _handle_add_bybit_callback(session, chat_id: int, choice: str) -> bool:
+async def _handle_add_other_exchange_callback(session, chat_id: int, choice: str) -> bool:
     state = _onboarding.get(chat_id)
-    if state is None or state["step"] != "add_bybit_choice":
+    if state is None or state["step"] != "add_other_exchange_choice":
         return False
     if choice == "yes":
-        state["step"] = "api_bybit_key"
-        await send_text(session, chat_id, "🔑 Укажи API-ключ Bybit Futures:")
+        other = state["data"]["other_exchange"]
+        state["data"]["current_exchange"] = other
+        state["data"]["is_second_exchange"] = True
+        state["step"] = "api_key"
+        await send_text(session, chat_id, f"🔑 Укажи API-ключ {_EXCHANGE_LABELS[other]} Futures:")
         return True
     if choice == "no":
         del _onboarding[chat_id]
@@ -379,10 +407,8 @@ _TEXT_STEP_HANDLERS = {
     "leverage": _handle_leverage,
     "sl_fixed_percent": _handle_sl_fixed_percent,
     "breakeven_after_tp": _handle_breakeven_after_tp,
-    "api_binance_key": _handle_api_binance_key,
-    "api_binance_secret": _handle_api_binance_secret,
-    "api_bybit_key": _handle_api_bybit_key,
-    "api_bybit_secret": _handle_api_bybit_secret,
+    "api_key": _handle_api_key,
+    "api_secret": _handle_api_secret,
 }
 
 
