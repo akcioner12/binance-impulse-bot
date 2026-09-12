@@ -34,6 +34,7 @@ from notifier import broadcast_signal
 from commands import run_command_listener
 from daily_report import daily_report_loop
 from storage import init_db, get_all_subscribers, upsert_alert_state, clear_alert_state, get_alert_state, get_all_active_symbols
+from trading_storage import init_trading_db
 
 logging.basicConfig(
     level=logging.INFO,
@@ -183,6 +184,7 @@ def get_symbols_for_report() -> tuple[list[str], list[str]]:
 
 async def main():
     init_db()
+    init_trading_db()
 
     logger.info("Загружаю начальные списки торгуемых пар с Binance и Bybit...")
 
