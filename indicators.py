@@ -173,3 +173,27 @@ def oi_price_divergence(oi_values: list[float], drop_threshold_pct: float = -5.0
         return False
     oi_change_pct = (oi_values[-1] - oi_values[0]) / oi_values[0] * 100
     return oi_change_pct <= drop_threshold_pct
+
+
+def calculate_vwap(candles: list[dict]) -> float:
+    """Volume-Weighted Average Price по типичной цене (high+low+close)/3 каждой свечи."""
+    total_pv = 0.0
+    total_v = 0.0
+    for c in candles:
+        typical_price = (c["high"] + c["low"] + c["close"]) / 3
+        total_pv += typical_price * c["volume"]
+        total_v += c["volume"]
+    if total_v == 0:
+        return 0.0
+    return total_pv / total_v
+
+
+def vwap_deviation_pct(candles: list[dict], current_price: float) -> float:
+    """
+    Отклонение текущей цены от VWAP в %. Большое отклонение — признак того,
+    что цена сильно оторвалась от "справедливой" средней (сигнал разворота).
+    """
+    vwap = calculate_vwap(candles)
+    if vwap == 0:
+        return 0.0
+    return (current_price - vwap) / vwap * 100
