@@ -74,3 +74,38 @@ async def fetch_klines(
         bybit_interval = _BYBIT_INTERVAL_MAP[interval]
         return await _fetch_bybit_klines(session, symbol, bybit_interval, limit)
     raise ValueError(f"Неизвестная биржа: {exchange}")
+
+
+async def _fetch_binance_funding_rate(session: aiohttp.ClientSession, symbol: str) -> float:
+    url = f"{BINANCE_FUTURES_REST}/fapi/v1/premiumIndex"
+    params = {"symbol": symbol}
+    async with session.get(url, params=params) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
+    return float(data["lastFundingRate"])
+
+
+async def _fetch_bybit_funding_rate(session: aiohttp.ClientSession, symbol: str) -> float:
+    url = f"{BYBIT_FUTURES_REST}/v5/market/tickers"
+    params = {"category": "linear", "symbol": symbol}
+    async with session.get(url, params=params) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
+
+    if data.get("retCode") != 0:
+        logger.error(f"Bybit funding rate ошибка ({symbol}): {data.get('retMsg')}")
+        return 0.0
+
+    tickers = data["result"]["list"]
+    if not tickers:
+        return 0.0
+    return float(tickers[0]["fundingRate"])
+
+
+async def fetch_funding_rate(session: aiohttp.ClientSession, exchange: str, symbol: str) -> float:
+    """Текущий funding rate в долях (0.0001 = 0.01%)."""
+    if exchange == "Binance":
+        return await _fetch_binance_funding_rate(session, symbol)
+    if exchange == "Bybit":
+        return await _fetch_bybit_funding_rate(session, symbol)
+    raise ValueError(f"Неизвестная биржа: {exchange}")
