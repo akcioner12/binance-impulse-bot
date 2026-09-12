@@ -80,7 +80,7 @@ class OpenPositionState:
         self.closed = False
 
 
-def _partial_close_pnl(direction: str, entry_price: float, exit_price: float, size: float) -> float:
+def calculate_position_pnl(direction: str, entry_price: float, exit_price: float, size: float) -> float:
     if direction == "long":
         return size * (exit_price - entry_price)
     return size * (entry_price - exit_price)
@@ -105,7 +105,7 @@ def check_stop_hit(state: OpenPositionState, price: float, atr_1h: float) -> dic
             return None
         event = "closed_stop_loss"
 
-    pnl = _partial_close_pnl(state.direction, state.avg_entry_price, price, state.remaining_quantity)
+    pnl = calculate_position_pnl(state.direction, state.avg_entry_price, price, state.remaining_quantity)
     size_closed = state.remaining_quantity
     state.closed = True
     return {"event": event, "pnl_delta": pnl, "size_closed": size_closed, "exit_price": price}
@@ -136,7 +136,7 @@ def check_take_profit_hits(
             continue
 
         size_closed = min(state.quantity * (tp["size_pct"] / 100), state.remaining_quantity)
-        pnl = _partial_close_pnl(state.direction, state.avg_entry_price, tp["level"], size_closed)
+        pnl = calculate_position_pnl(state.direction, state.avg_entry_price, tp["level"], size_closed)
         tp["filled"] = True
         state.remaining_quantity -= size_closed
         state.tp_hit_count += 1
