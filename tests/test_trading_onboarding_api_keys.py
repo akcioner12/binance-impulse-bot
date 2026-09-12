@@ -7,6 +7,7 @@ import trading_storage
 
 def setup_function():
     trading_storage.init_trading_db()
+    trading_storage.init_paper_trading_db()
     ob._onboarding.clear()
 
 
@@ -47,6 +48,7 @@ async def test_add_bybit_no_finishes_onboarding():
     assert 111 not in ob._onboarding  # диалог завершён
     mock_send.assert_called_once()
     assert "готов" in mock_send.call_args[0][2].lower()
+    assert trading_storage.get_paper_balance(111) == ob.DEFAULT_PAPER_BALANCE
 
 
 @pytest.mark.asyncio
@@ -85,6 +87,7 @@ async def test_api_bybit_secret_step_saves_credentials_and_finishes():
     assert creds["api_secret"] == "my-bybit-secret"
     assert 111 not in ob._onboarding
     mock_send.assert_called_once()
+    assert trading_storage.get_paper_balance(111) == ob.DEFAULT_PAPER_BALANCE
 
 
 @pytest.mark.asyncio

@@ -31,6 +31,8 @@ DEFAULT_PROFILE = {
     "max_concurrent_trades": 3,
 }
 
+DEFAULT_PAPER_BALANCE = 10000.0
+
 RISK_WARNING_THRESHOLDS = {
     "risk_percent": 3.0,
     "leverage": 10.0,
@@ -337,6 +339,7 @@ async def _handle_api_bybit_secret(session, chat_id: int, state: dict, text: str
         chat_id, "bybit", state["data"]["bybit_api_key"], text.strip()
     )
     del _onboarding[chat_id]
+    trading_storage.init_paper_balance(chat_id, DEFAULT_PAPER_BALANCE)
     await send_text(session, chat_id, "Ключ Bybit сохранён ✅\n\n🎉 Автотрейдинг готов к работе.")
     return True
 
@@ -351,6 +354,7 @@ async def _handle_add_bybit_callback(session, chat_id: int, choice: str) -> bool
         return True
     if choice == "no":
         del _onboarding[chat_id]
+        trading_storage.init_paper_balance(chat_id, DEFAULT_PAPER_BALANCE)
         await send_text(session, chat_id, "🎉 Автотрейдинг готов к работе.")
         return True
     return False
