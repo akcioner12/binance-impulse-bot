@@ -40,3 +40,16 @@ def find_magnet_levels(
     far = far_candidates[-1:] if far_candidates else []
 
     return near_mid + far
+
+
+def is_beyond_extension_cap(window_start_price: float, current_price: float, cap_pct: float = 90.0) -> bool:
+    """
+    True, если движение от старта импульса уже превысило потолок ожидания
+    (по спеке — диапазон +80-100%, дефолт 90% — середина диапазона).
+    После этого сетап не должен ждать подхода к магнит-уровню — вход ищется
+    на более ранних признаках истощения.
+    """
+    if window_start_price == 0:
+        return False
+    extension_pct = abs(current_price - window_start_price) / window_start_price * 100
+    return extension_pct >= cap_pct
