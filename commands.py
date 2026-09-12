@@ -15,6 +15,7 @@ from trading_onboarding import (
     handle_callback as onboarding_handle_callback,
     handle_text as onboarding_handle_text,
 )
+import trade_signal_ux
 
 logger = logging.getLogger(__name__)
 
@@ -92,7 +93,12 @@ async def _handle_callback_query(session: aiohttp.ClientSession, callback_query:
     data = callback_query.get("data", "")
     chat_id = callback_query["message"]["chat"]["id"]
 
-    await onboarding_handle_callback(session, chat_id, data)
+    if data.startswith("trade_confirm:"):
+        _, choice, symbol = data.split(":", 2)
+        await trade_signal_ux.handle_confirmation_callback(symbol, choice)
+    else:
+        await onboarding_handle_callback(session, chat_id, data)
+
     await answer_callback_query(session, callback_id)
 
 
