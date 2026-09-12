@@ -53,7 +53,10 @@ async def handle_new_impulse(
             chat_id, symbol, exchange, direction, current_price, profile, analysis, signal_id
         )
 
-    return None  # ветка reversal реализуется в Task 4
+    return await _create_pending_reversal_setup(
+        session, chat_id, symbol, exchange, direction, current_price,
+        window_start_price, profile, analysis, signal_id,
+    )
 
 
 async def _open_continuation_position(
@@ -84,3 +87,32 @@ async def _open_continuation_position(
     trading_storage.update_trade_signal_status(signal_id, "executed")
 
     return {"classification": "continuation", "signal_id": signal_id, "position_id": result["position_id"]}
+
+
+async def _create_pending_reversal_setup(
+    session, chat_id: int, symbol: str, exchange: str, direction: str, current_price: float,
+    window_start_price: float, profile: dict, analysis: dict, signal_id: int,
+) -> dict:
+    daily_candles = await market_data.fetch_klines(session, exchange, symbol, "1d", limit=90)
+    weekly_candles = await market_data.fetch_klines(session, exchange, symbol, "1w", limit=52)
+    levels = magnet_levels_module.find_magnet_levels(daily_candles, weekly_candles, current_price, direction)
+
+    trade_direction = position_manager.determine_trade_direction(direction, "reversal")
+    estimated_stop_loss = position_manager.calculate_stop_loss(
+        current_price, trade_direction, profile["sl_method"],
+        analysis["atr_1h"], DEFAULT_ATR_MULTIPLIER, profile["sl_fixed_percent"],
+    )
+    balance = trading_storage.get_paper_balance(chat_id) or 0.0
+    total_size = position_manager.calculate_position_size(
+        balance, profile["risk_percent"], current_price, estimated_stop_loss
+    )
+
+    _pending_setups[symbol] = {
+        "chat_id": chat_id, "exchange": exchange, "signal_id": signal_id,
+        "impulse_direction": direction, "window_start_price": window_start_price,
+        "trigger_part1": entry_engine.create_part1_trigger(direction, analysis["atr_15m"]),
+        "trigger_part2": entry_engine.create_part2_trigger(direction, analysis["atr_15m"]),
+        "part_size": total_size / 2,
+        "atr_1h": analysis["atr_1h"], "magnet_levels": levels, "profile": profile,
+    }
+    return {"classification": "reversal", "signal_id": signal_id, "magnet_levels": levels}
