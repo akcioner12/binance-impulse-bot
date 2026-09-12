@@ -10,11 +10,23 @@ def setup_function():
 
 
 @pytest.mark.asyncio
-async def test_trading_setup_command_calls_start_trading_setup():
+async def test_trading_setup_command_calls_start_trading_setup_for_admin(monkeypatch):
+    monkeypatch.setattr(commands, "ADMIN_CHAT_ID", 111)
     with patch("commands.start_trading_setup", new=AsyncMock()) as mock_start:
         await commands._handle_command(None, 111, "/trading_setup")
 
     mock_start.assert_called_once_with(None, 111)
+
+
+@pytest.mark.asyncio
+async def test_trading_setup_command_denied_for_non_admin(monkeypatch):
+    monkeypatch.setattr(commands, "ADMIN_CHAT_ID", 111)
+    with patch("commands.start_trading_setup", new=AsyncMock()) as mock_start, \
+         patch("commands.send_text", new=AsyncMock()) as mock_send:
+        await commands._handle_command(None, 999, "/trading_setup")
+
+    mock_start.assert_not_called()
+    mock_send.assert_called_once()
 
 
 @pytest.mark.asyncio

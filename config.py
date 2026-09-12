@@ -32,6 +32,11 @@ DB_PATH = os.getenv("DB_PATH", "bot_state.db")
 # Сгенерировать: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
 ENCRYPTION_KEY = os.getenv("ENCRYPTION_KEY", "")
 
+# --- Автотрейдинг ---
+# chat_id владельца бота — единственный, кому доступна команда /trading_setup.
+# В v1 автотрейдинг работает только для владельца (см. спеку в docs/superpowers/specs/).
+ADMIN_CHAT_ID = int(os.getenv("ADMIN_CHAT_ID", "0"))
+
 BINANCE_FUTURES_REST = "https://fapi.binance.com"
 BINANCE_FUTURES_WS   = "wss://fstream.binance.com/market"
 

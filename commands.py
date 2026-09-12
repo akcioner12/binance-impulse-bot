@@ -7,7 +7,7 @@ import asyncio
 import logging
 import aiohttp
 
-from config import TELEGRAM_TOKEN, IMPULSE_START_THRESHOLD, IMPULSE_STEP, WINDOW_MINUTES, MIN_DAILY_VOLUME_USDT
+from config import TELEGRAM_TOKEN, IMPULSE_START_THRESHOLD, IMPULSE_STEP, WINDOW_MINUTES, MIN_DAILY_VOLUME_USDT, ADMIN_CHAT_ID
 from storage import add_subscriber, remove_subscriber, is_subscribed, count_subscribers
 from notifier import send_text, answer_callback_query
 from trading_onboarding import (
@@ -81,6 +81,9 @@ async def _handle_command(session: aiohttp.ClientSession, chat_id: int, text: st
         await send_text(session, chat_id, msg)
 
     elif stripped.startswith("/trading_setup"):
+        if chat_id != ADMIN_CHAT_ID:
+            await send_text(session, chat_id, "⛔ Эта функция пока недоступна.")
+            return
         await start_trading_setup(session, chat_id)
 
 
