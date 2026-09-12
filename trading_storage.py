@@ -119,6 +119,23 @@ def init_paper_trading_db():
                 updated_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS positions (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                exchange TEXT NOT NULL,
+                direction TEXT NOT NULL,
+                mode TEXT NOT NULL,
+                avg_entry_price REAL NOT NULL,
+                quantity REAL NOT NULL,
+                stop_loss REAL NOT NULL,
+                status TEXT NOT NULL DEFAULT 'open',
+                realized_pnl REAL NOT NULL DEFAULT 0.0,
+                opened_at TEXT DEFAULT CURRENT_TIMESTAMP,
+                closed_at TEXT
+            )
+        """)
         conn.commit()
     logger.info("Таблицы paper-trading инициализированы")
 
@@ -151,6 +168,52 @@ def adjust_paper_balance(chat_id: int, delta: float) -> float:
             "SELECT balance FROM paper_balance WHERE chat_id = ?", (chat_id,)
         ).fetchone()
         return row["balance"]
+
+
+def create_position(
+    chat_id: int, symbol: str, exchange: str, direction: str, mode: str,
+    avg_entry_price: float, quantity: float, stop_loss: float,
+) -> int:
+    with get_conn() as conn:
+        cursor = conn.execute("""
+            INSERT INTO positions (
+                chat_id, symbol, exchange, direction, mode,
+                avg_entry_price, quantity, stop_loss
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        """, (chat_id, symbol, exchange, direction, mode, avg_entry_price, quantity, stop_loss))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_position(position_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM positions WHERE id = ?", (position_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def get_open_positions(chat_id: int) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM positions WHERE chat_id = ? AND status = 'open'", (chat_id,)
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def update_position_stop_loss(position_id: int, new_stop_loss: float):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE positions SET stop_loss = ? WHERE id = ?", (new_stop_loss, position_id)
+        )
+        conn.commit()
+
+
+def close_position(position_id: int, realized_pnl: float):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE positions SET status = 'closed', realized_pnl = ?, closed_at = CURRENT_TIMESTAMP WHERE id = ?",
+            (realized_pnl, position_id),
+        )
+        conn.commit()
 
 
 def get_api_credentials(chat_id: int, exchange: str) -> dict | None:
