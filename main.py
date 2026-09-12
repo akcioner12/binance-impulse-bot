@@ -33,6 +33,7 @@ from bybit_collector import stream_bybit_symbols
 from notifier import broadcast_signal
 from commands import run_command_listener
 from daily_report import daily_report_loop
+from trading_daily_report import trading_daily_report_loop
 from storage import init_db, get_all_subscribers, upsert_alert_state, clear_alert_state, get_alert_state, get_all_active_symbols
 from trading_storage import init_trading_db
 import live_trading
@@ -235,6 +236,7 @@ async def main():
             collectors_supervisor(),
             run_command_listener(cmd_session),
             daily_report_loop(get_symbols_for_report, get_all_subscribers),
+            trading_daily_report_loop(ADMIN_CHAT_ID),
         )
 
 
