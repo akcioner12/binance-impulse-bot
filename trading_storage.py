@@ -136,6 +136,18 @@ def init_paper_trading_db():
                 closed_at TEXT
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS trade_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                exchange TEXT NOT NULL,
+                impulse_direction TEXT NOT NULL,
+                classification TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
         conn.commit()
     logger.info("Таблицы paper-trading инициализированы")
 
@@ -213,6 +225,30 @@ def close_position(position_id: int, realized_pnl: float):
             "UPDATE positions SET status = 'closed', realized_pnl = ?, closed_at = CURRENT_TIMESTAMP WHERE id = ?",
             (realized_pnl, position_id),
         )
+        conn.commit()
+
+
+def create_trade_signal(
+    chat_id: int, symbol: str, exchange: str, impulse_direction: str, classification: str
+) -> int:
+    with get_conn() as conn:
+        cursor = conn.execute("""
+            INSERT INTO trade_signals (chat_id, symbol, exchange, impulse_direction, classification)
+            VALUES (?, ?, ?, ?, ?)
+        """, (chat_id, symbol, exchange, impulse_direction, classification))
+        conn.commit()
+        return cursor.lastrowid
+
+
+def get_trade_signal(signal_id: int) -> dict | None:
+    with get_conn() as conn:
+        row = conn.execute("SELECT * FROM trade_signals WHERE id = ?", (signal_id,)).fetchone()
+        return dict(row) if row else None
+
+
+def update_trade_signal_status(signal_id: int, status: str):
+    with get_conn() as conn:
+        conn.execute("UPDATE trade_signals SET status = ? WHERE id = ?", (status, signal_id))
         conn.commit()
 
 

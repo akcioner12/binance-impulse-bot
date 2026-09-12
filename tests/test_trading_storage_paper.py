@@ -102,3 +102,30 @@ def test_close_position_sets_status_and_pnl():
     assert position["status"] == "closed"
     assert position["realized_pnl"] == 25.5
     assert position["closed_at"] is not None
+
+
+def test_create_trade_signal_returns_id_and_defaults_to_pending():
+    signal_id = trading_storage.create_trade_signal(
+        chat_id=111, symbol="BTCUSDT", exchange="Binance",
+        impulse_direction="up", classification="reversal",
+    )
+    assert isinstance(signal_id, int)
+    signal = trading_storage.get_trade_signal(signal_id)
+    assert signal["status"] == "pending"
+    assert signal["symbol"] == "BTCUSDT"
+    assert signal["impulse_direction"] == "up"
+    assert signal["classification"] == "reversal"
+
+
+def test_get_trade_signal_none_for_unknown_id():
+    assert trading_storage.get_trade_signal(999999) is None
+
+
+def test_update_trade_signal_status_changes_value():
+    signal_id = trading_storage.create_trade_signal(
+        chat_id=111, symbol="BTCUSDT", exchange="Binance",
+        impulse_direction="down", classification="continuation",
+    )
+    trading_storage.update_trade_signal_status(signal_id, status="executed")
+    signal = trading_storage.get_trade_signal(signal_id)
+    assert signal["status"] == "executed"
