@@ -51,3 +51,29 @@ def calculate_stop_loss(
     if direction == "long":
         return avg_entry_price - distance
     return avg_entry_price + distance
+
+
+def calculate_take_profits(
+    avg_entry_price: float,
+    stop_loss: float,
+    direction: str,
+    tp_split_preset: str,
+    r_multiples: tuple[float, float, float] = (1.0, 2.0, 3.0),
+) -> list[dict]:
+    """
+    TP1-3 на R-кратных расстояниях от входа (R = |вход - SL|), доли позиции —
+    из пресета TP_SPLIT_PRESETS (см. trading_onboarding.py). TP4 сюда не входит —
+    это трейлинг-остаток позиции, управляется ChandelierTrailingStop (Task 5).
+    """
+    risk_distance = abs(avg_entry_price - stop_loss)
+    size_splits = TP_SPLIT_PRESETS[tp_split_preset]
+
+    take_profits = []
+    for r, size_pct in zip(r_multiples, size_splits):
+        if direction == "long":
+            level = avg_entry_price + risk_distance * r
+        else:
+            level = avg_entry_price - risk_distance * r
+        take_profits.append({"level": level, "size_pct": size_pct})
+
+    return take_profits
