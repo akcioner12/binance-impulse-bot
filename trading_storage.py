@@ -266,3 +266,21 @@ def get_api_credentials(chat_id: int, exchange: str) -> dict | None:
         "api_key": decrypt_secret(row["api_key_encrypted"]),
         "api_secret": decrypt_secret(row["api_secret_encrypted"]),
     }
+
+
+def set_trading_active(chat_id: int, is_active: bool):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE user_profiles SET is_active = ? WHERE chat_id = ?",
+            (1 if is_active else 0, chat_id),
+        )
+        conn.commit()
+
+
+def get_positions_closed_since(chat_id: int, since: str) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT * FROM positions WHERE chat_id = ? AND status = 'closed' AND closed_at >= ?",
+            (chat_id, since),
+        ).fetchall()
+        return [dict(row) for row in rows]
