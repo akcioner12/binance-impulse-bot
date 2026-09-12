@@ -35,6 +35,7 @@ from commands import run_command_listener
 from daily_report import daily_report_loop
 from storage import init_db, get_all_subscribers, upsert_alert_state, clear_alert_state, get_alert_state, get_all_active_symbols
 from trading_storage import init_trading_db
+import live_trading
 
 logging.basicConfig(
     level=logging.INFO,
@@ -75,6 +76,13 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
         _last_tick_log_time = now
 
     signal = tracker.update(symbol, exchange, price, ts)
+
+    try:
+        tick_events = live_trading.handle_price_tick(symbol, price)
+        if tick_events:
+            logger.info(f"Автотрейдинг [{symbol}]: {tick_events}")
+    except Exception as e:
+        logger.error(f"Автотрейдинг: ошибка обработки тика {symbol}: {e}")
 
     if signal is None:
         if not tracker.is_active(symbol) and get_alert_state(symbol):
