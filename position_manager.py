@@ -28,3 +28,26 @@ def calculate_average_entry_price(fills: list[tuple[float, float]]) -> float:
     if total_size == 0:
         return 0.0
     return sum(price * size for price, size in fills) / total_size
+
+
+def calculate_stop_loss(
+    avg_entry_price: float,
+    direction: str,
+    sl_method: str = "atr",
+    atr_1h: float | None = None,
+    atr_multiplier: float = 1.5,
+    fixed_percent: float | None = None,
+) -> float:
+    """
+    direction — 'long' или 'short' (направление СДЕЛКИ, из determine_trade_direction()).
+    sl_method='atr' -> distance = atr_1h * atr_multiplier (по умолчанию, адаптируется под волатильность).
+    sl_method='fixed_percent' -> distance = avg_entry_price * fixed_percent / 100.
+    """
+    if sl_method == "fixed_percent":
+        distance = avg_entry_price * (fixed_percent / 100)
+    else:
+        distance = atr_1h * atr_multiplier
+
+    if direction == "long":
+        return avg_entry_price - distance
+    return avg_entry_price + distance
