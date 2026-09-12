@@ -116,3 +116,73 @@ async def _create_pending_reversal_setup(
         "atr_1h": analysis["atr_1h"], "magnet_levels": levels, "profile": profile,
     }
     return {"classification": "reversal", "signal_id": signal_id, "magnet_levels": levels}
+
+
+def handle_price_tick(symbol: str, price: float) -> list[str] | None:
+    """
+    Вызывается на каждый тик цены символа. Возвращает список произошедших
+    событий или None, если по символу нет ни ожидающего сетапа, ни открытой
+    позиции (открытые позиции обрабатываются в Task 6).
+    """
+    if symbol in _pending_setups:
+        return _process_pending_setup_tick(symbol, price)
+    return None
+
+
+def _process_pending_setup_tick(symbol: str, price: float) -> list[str] | None:
+    setup = _pending_setups[symbol]
+    events = []
+
+    if not setup["trigger_part1"].fired and setup["trigger_part1"].update(price):
+        _handle_part_fill(setup, symbol, price)
+        events.append("part1_filled")
+
+    if not setup["trigger_part2"].fired and setup["trigger_part2"].update(price):
+        _handle_part_fill(setup, symbol, price)
+        events.append("part2_filled")
+
+    if setup["trigger_part1"].fired and setup["trigger_part2"].fired:
+        del _pending_setups[symbol]
+        events.append("setup_complete")
+    elif not events and not setup["trigger_part1"].fired and not setup["trigger_part2"].fired:
+        if magnet_levels_module.is_beyond_extension_cap(setup["window_start_price"], price):
+            trading_storage.update_trade_signal_status(setup["signal_id"], "expired")
+            del _pending_setups[symbol]
+            events.append("setup_expired")
+
+    return events or None
+
+
+def _handle_part_fill(setup: dict, symbol: str, price: float) -> None:
+    """
+    Открывает новую позицию по первой сработавшей части, либо объединяет
+    со второй частью, если позиция первой ещё открыта и ни один TP не сработал.
+    Если позиция первой части уже закрыта (SL) или частично зафиксирована
+    (сработал TP) -- часть открывает отдельную независимую позицию, чтобы не
+    "расфиливать" уже зафиксированные тейки при пересборке сетки.
+    """
+    profile = setup["profile"]
+    direction = position_manager.determine_trade_direction(setup["impulse_direction"], "reversal")
+    existing = _open_positions.get(symbol)
+
+    if existing is not None and not existing["state"].closed and existing["state"].tp_hit_count == 0:
+        old_state = existing["state"]
+        fills = [(old_state.avg_entry_price, old_state.quantity), (price, setup["part_size"])]
+        trading_storage.close_position(old_state.position_id, realized_pnl=0.0)
+    else:
+        fills = [(price, setup["part_size"])]
+
+    result = order_executor.open_paper_position(
+        chat_id=setup["chat_id"], symbol=symbol, exchange=setup["exchange"], direction=direction,
+        fills=fills, sl_method=profile["sl_method"], atr_1h=setup["atr_1h"],
+        atr_multiplier=DEFAULT_ATR_MULTIPLIER, fixed_percent=profile["sl_fixed_percent"],
+        tp_split_preset=profile["tp_split_preset"],
+    )
+    new_state = order_executor.OpenPositionState(
+        position_id=result["position_id"], direction=direction,
+        avg_entry_price=result["avg_entry_price"], quantity=result["quantity"],
+        stop_loss=result["stop_loss"], take_profits=result["take_profits"],
+        breakeven_after_tp=profile["breakeven_after_tp"],
+    )
+    _open_positions[symbol] = {"chat_id": setup["chat_id"], "state": new_state, "atr_1h": setup["atr_1h"]}
+    trading_storage.update_trade_signal_status(setup["signal_id"], "executed")
