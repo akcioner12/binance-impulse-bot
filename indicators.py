@@ -197,3 +197,29 @@ def vwap_deviation_pct(candles: list[dict], current_price: float) -> float:
     if vwap == 0:
         return 0.0
     return (current_price - vwap) / vwap * 100
+
+
+def is_near_significant_level(
+    candles: list[dict], current_price: float, proximity_pct: float = 1.0, window: int = 3
+) -> bool:
+    """
+    True, если текущая цена находится в пределах proximity_pct% от значимого
+    исторического хая/лоя (по свечам старшего ТФ) — цена уткнулась в S/R-уровень,
+    сигнал разворота.
+    """
+    if not candles:
+        return False
+
+    highs = [c["high"] for c in candles]
+    lows = [c["low"] for c in candles]
+    peak_indices = find_local_peaks(highs, window)
+    trough_indices = find_local_troughs(lows, window)
+    levels = [highs[i] for i in peak_indices] + [lows[i] for i in trough_indices]
+
+    for level in levels:
+        if level == 0:
+            continue
+        distance_pct = abs(current_price - level) / level * 100
+        if distance_pct <= proximity_pct:
+            return True
+    return False
