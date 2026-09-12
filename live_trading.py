@@ -122,11 +122,51 @@ def handle_price_tick(symbol: str, price: float) -> list[str] | None:
     """
     Вызывается на каждый тик цены символа. Возвращает список произошедших
     событий или None, если по символу нет ни ожидающего сетапа, ни открытой
-    позиции (открытые позиции обрабатываются в Task 6).
+    позиции.
+
+    Символ может одновременно быть и в _pending_setups, и в _open_positions
+    (часть 1 уже открыла позицию, часть 2 ещё ждёт свой триггер независимо) --
+    поэтому обе ветки проверяются на каждом тике, а не взаимоисключающе.
+    Сначала проверяется ожидающий сетап (часть 2 может слить в позицию на
+    этом же тике), затем состояние (возможно, уже обновлённой) открытой позиции.
     """
+    events = []
+
     if symbol in _pending_setups:
-        return _process_pending_setup_tick(symbol, price)
-    return None
+        pending_events = _process_pending_setup_tick(symbol, price)
+        if pending_events:
+            events.extend(pending_events)
+
+    if symbol in _open_positions:
+        open_events = _process_open_position_tick(symbol, price)
+        if open_events:
+            events.extend(open_events)
+
+    return events or None
+
+
+def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
+    entry = _open_positions[symbol]
+    state = entry["state"]
+    chat_id = entry["chat_id"]
+    events = []
+
+    stop_event = order_executor.check_stop_hit(state, price, entry["atr_1h"])
+    if stop_event is not None:
+        trading_storage.adjust_paper_balance(chat_id, stop_event["pnl_delta"])
+        trading_storage.close_position(state.position_id, realized_pnl=stop_event["pnl_delta"])
+        del _open_positions[symbol]
+        return [stop_event["event"]]
+
+    tp_events = order_executor.check_take_profit_hits(state, price)
+    for event in tp_events:
+        if event["event"].startswith("tp"):
+            trading_storage.adjust_paper_balance(chat_id, event["pnl_delta"])
+        elif event["event"] == "moved_to_breakeven":
+            trading_storage.update_position_stop_loss(state.position_id, event["new_stop_loss"])
+        events.append(event["event"])
+
+    return events or None
 
 
 def _process_pending_setup_tick(symbol: str, price: float) -> list[str] | None:
