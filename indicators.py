@@ -153,3 +153,23 @@ def is_climax_candle(
     max_wick = max(upper_wick, lower_wick)
 
     return (max_wick / full_range) >= wick_ratio
+
+
+def is_funding_extreme(funding_rate: float, threshold: float = 0.001) -> bool:
+    """
+    True, если funding rate (в долях, 0.0001 = 0.01%) по модулю превышает порог —
+    рынок перегружен плечом в одну сторону, повышенный риск сквиза (сигнал разворота).
+    """
+    return abs(funding_rate) >= threshold
+
+
+def oi_price_divergence(oi_values: list[float], drop_threshold_pct: float = -5.0) -> bool:
+    """
+    True, если открытый интерес заметно упал за период (изменение <= drop_threshold_pct,
+    отрицательное число) — движение цены объясняется закрытием позиций (сквиз),
+    а не притоком нового капитала. Сигнал разворота: сквиз обычно выдыхается.
+    """
+    if len(oi_values) < 2 or oi_values[0] == 0:
+        return False
+    oi_change_pct = (oi_values[-1] - oi_values[0]) / oi_values[0] * 100
+    return oi_change_pct <= drop_threshold_pct
