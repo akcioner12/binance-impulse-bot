@@ -77,3 +77,15 @@ def calculate_take_profits(
         take_profits.append({"level": level, "size_pct": size_pct})
 
     return take_profits
+
+
+def calculate_breakeven_plus_price(avg_entry_price: float, direction: str, commission_pct: float = 0.08) -> float:
+    """
+    Цена "безубыток+" — не ровно цена входа, а с запасом на комиссии обеих
+    сделок (вход + выход). commission_pct=0.08 -> ~0.04% тейкер за сторону
+    на Binance/Bybit, round-trip 0.08%. Переносится сюда после срабатывания TP2.
+    """
+    commission_distance = avg_entry_price * (commission_pct / 100)
+    if direction == "long":
+        return avg_entry_price + commission_distance
+    return avg_entry_price - commission_distance
