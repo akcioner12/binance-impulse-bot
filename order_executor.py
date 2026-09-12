@@ -109,3 +109,50 @@ def check_stop_hit(state: OpenPositionState, price: float, atr_1h: float) -> dic
     size_closed = state.remaining_quantity
     state.closed = True
     return {"event": event, "pnl_delta": pnl, "size_closed": size_closed, "exit_price": price}
+
+
+def _is_favorable_cross(direction: str, price: float, level: float) -> bool:
+    if direction == "long":
+        return price >= level
+    return price <= level
+
+
+def check_take_profit_hits(
+    state: OpenPositionState, price: float, breakeven_commission_pct: float = 0.08
+) -> list[dict]:
+    """
+    Проверяет TP1-3 по очереди. При достижении breakeven_after_tp -- переносит
+    стоп в безубыток+. При достижении TP3 -- активирует ChandelierTrailingStop
+    на оставшийся объём (TP4).
+    """
+    if state.closed:
+        return []
+
+    events = []
+    for idx, tp in enumerate(state.take_profits, start=1):
+        if tp["filled"]:
+            continue
+        if not _is_favorable_cross(state.direction, price, tp["level"]):
+            continue
+
+        size_closed = min(state.quantity * (tp["size_pct"] / 100), state.remaining_quantity)
+        pnl = _partial_close_pnl(state.direction, state.avg_entry_price, tp["level"], size_closed)
+        tp["filled"] = True
+        state.remaining_quantity -= size_closed
+        state.tp_hit_count += 1
+        events.append({
+            "event": f"tp{idx}_hit", "pnl_delta": pnl,
+            "size_closed": size_closed, "exit_price": tp["level"],
+        })
+
+        if state.tp_hit_count == state.breakeven_after_tp:
+            state.stop_loss = calculate_breakeven_plus_price(
+                state.avg_entry_price, state.direction, breakeven_commission_pct
+            )
+            events.append({"event": "moved_to_breakeven", "new_stop_loss": state.stop_loss})
+
+        if idx == 3:
+            state.chandelier = ChandelierTrailingStop(direction=state.direction)
+            events.append({"event": "chandelier_activated"})
+
+    return events
