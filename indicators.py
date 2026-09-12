@@ -36,3 +36,39 @@ def trend_direction(candles: list[dict], period: int = 20) -> str:
     if slope < -noise_threshold:
         return "down"
     return "flat"
+
+
+def _rsi_from_averages(avg_gain: float, avg_loss: float) -> float:
+    if avg_loss == 0:
+        return 100.0
+    rs = avg_gain / avg_loss
+    return 100 - (100 / (1 + rs))
+
+
+def rsi(values: list[float], period: int = 14) -> list[float | None]:
+    """
+    RSI по методу Уайлдера. Результат той же длины, что и `values` —
+    первые `period` элементов None (недостаточно данных), чтобы индекс
+    результата совпадал с индексом исходной цены (важно для детектора дивергенции).
+    """
+    result: list[float | None] = [None] * len(values)
+    if len(values) < period + 1:
+        return result
+
+    gains = []
+    losses = []
+    for i in range(1, len(values)):
+        change = values[i] - values[i - 1]
+        gains.append(max(change, 0.0))
+        losses.append(max(-change, 0.0))
+
+    avg_gain = sum(gains[:period]) / period
+    avg_loss = sum(losses[:period]) / period
+    result[period] = _rsi_from_averages(avg_gain, avg_loss)
+
+    for i in range(period, len(gains)):
+        avg_gain = (avg_gain * (period - 1) + gains[i]) / period
+        avg_loss = (avg_loss * (period - 1) + losses[i]) / period
+        result[i + 1] = _rsi_from_averages(avg_gain, avg_loss)
+
+    return result
