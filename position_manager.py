@@ -3,6 +3,8 @@
 безубыток+ после TP2, трейлинг-стоп TP4 (Chandelier Exit).
 """
 
+from collections import deque
+
 from trading_onboarding import TP_SPLIT_PRESETS
 
 
@@ -121,6 +123,33 @@ class ChandelierTrailingStop:
         if self.direction == "long":
             return price <= self.stop_price
         return price >= self.stop_price
+
+
+class RealizedVolatilityTracker:
+    """
+    Короткопериодная реализованная волатильность прямо из потока тиков сделки --
+    в отличие от ATR(1ч)/(15м), который считается один раз на входе и не видит,
+    что волатильность резко выросла УЖЕ ПОСЛЕ входа (типично для манипуляций).
+    Сходится за несколько тиков (минут), а не за часы.
+
+    value() берёт МАКСИМУМ, а не среднее из последних `window` изменений цены --
+    чтобы один резкий выброс не "размывался" соседними спокойными тиками и не
+    терялся из виду раньше времени, пока манипуляция ещё не выдохлась.
+    """
+
+    def __init__(self, window: int = 8):
+        self._changes: deque[float] = deque(maxlen=window)
+        self._last_price: float | None = None
+
+    def update(self, price: float) -> None:
+        if self._last_price is not None:
+            self._changes.append(abs(price - self._last_price))
+        self._last_price = price
+
+    def value(self, min_samples: int = 3) -> float | None:
+        if len(self._changes) < min_samples:
+            return None
+        return max(self._changes)
 
 
 def calculate_position_size(balance: float, risk_percent: float, entry_price: float, stop_loss: float) -> float:

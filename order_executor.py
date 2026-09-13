@@ -10,6 +10,7 @@ from position_manager import (
     calculate_take_profits,
     calculate_breakeven_plus_price,
     ChandelierTrailingStop,
+    RealizedVolatilityTracker,
 )
 
 
@@ -78,6 +79,11 @@ class OpenPositionState:
         self.tp_hit_count = 0
         self.chandelier: ChandelierTrailingStop | None = None
         self.closed = False
+        # Копит реализованную волатильность с каждого тика с момента открытия
+        # позиции -- используется только для TP4/Chandelier (см. check_stop_hit),
+        # чтобы трейлинг успевал расшириться за считанные минуты, если рынок
+        # вдруг стал гораздо более резким, чем ATR на момент входа.
+        self.volatility_tracker = RealizedVolatilityTracker()
 
 
 def calculate_position_pnl(direction: str, entry_price: float, exit_price: float, size: float) -> float:
@@ -94,8 +100,12 @@ def check_stop_hit(state: OpenPositionState, price: float, atr_1h: float) -> dic
     if state.closed:
         return None
 
+    state.volatility_tracker.update(price)
+
     if state.chandelier is not None:
-        state.chandelier.update(price, atr_1h)
+        realized = state.volatility_tracker.value()
+        effective_atr = atr_1h if realized is None else max(atr_1h, realized)
+        state.chandelier.update(price, effective_atr)
         if not state.chandelier.is_triggered(price):
             return None
         event = "closed_chandelier"
