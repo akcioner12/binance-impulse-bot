@@ -81,3 +81,57 @@ async def test_run_autotrading_for_admin_calls_handle_new_impulse():
 async def test_run_autotrading_for_admin_swallows_errors():
     with patch("main.live_trading.handle_new_impulse", new=AsyncMock(side_effect=RuntimeError("boom"))):
         await main._run_autotrading_for_admin("BTCUSDT", "Binance", "up", 100.0, 76.0)  # не должно упасть
+
+
+@pytest.mark.asyncio
+async def test_on_kline_close_spawns_entry_notification_on_part1_filled():
+    with patch.object(main.tracker, "update", return_value=None), \
+         patch.object(main.tracker, "is_active", return_value=True), \
+         patch("main.live_trading.handle_price_tick", return_value=["part1_filled"]), \
+         patch("main.asyncio.create_task") as mock_create_task:
+        mock_create_task.side_effect = lambda coro: coro.close()
+        await main.on_kline_close("BTCUSDT", "Binance", 100.0, 1000)
+
+    mock_create_task.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_on_kline_close_does_not_spawn_entry_notification_for_other_events():
+    with patch.object(main.tracker, "update", return_value=None), \
+         patch.object(main.tracker, "is_active", return_value=True), \
+         patch("main.live_trading.handle_price_tick", return_value=["closed_stop_loss"]), \
+         patch("main.asyncio.create_task") as mock_create_task:
+        await main.on_kline_close("BTCUSDT", "Binance", 100.0, 1000)
+
+    mock_create_task.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_notify_entry_for_admin_sends_formatted_report():
+    snapshot = {
+        "chat_id": 111, "direction": "short", "avg_entry_price": 1.8, "quantity": 10.0,
+        "stop_loss": 1.9, "take_profits": [{"level": 1.7, "size_pct": 15}],
+        "tp4_size_pct": 85, "risk_amount": 1.0,
+    }
+    with patch("main.live_trading.get_position_snapshot", return_value=snapshot), \
+         patch("main.send_text", new=AsyncMock()) as mock_send:
+        await main._notify_entry_for_admin("LSKUSDT", "Binance")
+
+    mock_send.assert_called_once()
+    assert mock_send.call_args[0][1] == 111
+    assert "LSKUSDT" in mock_send.call_args[0][2]
+
+
+@pytest.mark.asyncio
+async def test_notify_entry_for_admin_noop_when_no_position():
+    with patch("main.live_trading.get_position_snapshot", return_value=None), \
+         patch("main.send_text", new=AsyncMock()) as mock_send:
+        await main._notify_entry_for_admin("LSKUSDT", "Binance")
+
+    mock_send.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_notify_entry_for_admin_swallows_errors():
+    with patch("main.live_trading.get_position_snapshot", side_effect=RuntimeError("boom")):
+        await main._notify_entry_for_admin("LSKUSDT", "Binance")  # не должно упасть

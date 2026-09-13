@@ -1,5 +1,5 @@
 import pytest
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import live_trading
 
@@ -27,7 +27,8 @@ async def test_continuation_opens_position_immediately():
     with patch("live_trading.trading_storage.get_paper_balance", return_value=1000.0), \
          patch("live_trading.trading_storage.update_trade_signal_status") as mock_update_status, \
          patch("live_trading.trading_storage.create_position", return_value=7), \
-         patch("live_trading._compute_wave_size_multiplier", return_value=1.0):
+         patch("live_trading._compute_wave_size_multiplier", return_value=1.0), \
+         patch("live_trading.send_text", new=AsyncMock()) as mock_send:
         result = await live_trading.execute_setup(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="up",
             classification="continuation", current_price=100.0, window_start_price=70.0,
@@ -40,6 +41,10 @@ async def test_continuation_opens_position_immediately():
     state = live_trading._open_positions["BTCUSDT"]["state"]
     assert state.direction == "long"  # continuation + 'up' -> long
     mock_update_status.assert_called_once_with(42, "executed")
+    mock_send.assert_called_once()
+    assert mock_send.call_args[0][0] is None  # session
+    assert mock_send.call_args[0][1] == 111  # chat_id
+    assert "BTCUSDT" in mock_send.call_args[0][2]  # текст отчёта
 
 
 @pytest.mark.asyncio
@@ -47,7 +52,8 @@ async def test_continuation_short_direction_for_down_impulse():
     with patch("live_trading.trading_storage.get_paper_balance", return_value=1000.0), \
          patch("live_trading.trading_storage.update_trade_signal_status"), \
          patch("live_trading.trading_storage.create_position", return_value=8), \
-         patch("live_trading._compute_wave_size_multiplier", return_value=1.0):
+         patch("live_trading._compute_wave_size_multiplier", return_value=1.0), \
+         patch("live_trading.send_text", new=AsyncMock()):
         await live_trading.execute_setup(
             session=None, chat_id=111, symbol="ETHUSDT", exchange="Binance", direction="down",
             classification="continuation", current_price=100.0, window_start_price=140.0,

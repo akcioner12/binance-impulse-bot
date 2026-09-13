@@ -93,7 +93,8 @@ async def test_execute_setup_halves_size_on_second_wave():
     signal_id_2 = _make_signal()  # волна 2
 
     trading_storage.init_paper_balance(111, 10000.0)
-    with patch("live_trading.trading_storage.create_position", return_value=99):
+    with patch("live_trading.trading_storage.create_position", return_value=99), \
+         patch("live_trading.send_text", new=AsyncMock()):
         result = await live_trading.execute_setup(
             session=None, chat_id=111, symbol="LSKUSDT", exchange="Binance", direction="up",
             classification="continuation", current_price=100.0, window_start_price=70.0,

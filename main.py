@@ -30,7 +30,7 @@ from bybit_fetcher import get_bybit_tradable_symbols
 from analyzer import PriceWindowTracker
 from collector import stream_all_symbols
 from bybit_collector import stream_bybit_symbols
-from notifier import broadcast_signal
+from notifier import broadcast_signal, send_text
 from commands import run_command_listener
 from daily_report import daily_report_loop
 from trading_daily_report import trading_daily_report_loop
@@ -82,6 +82,8 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
         tick_events = live_trading.handle_price_tick(symbol, price)
         if tick_events:
             logger.info(f"Автотрейдинг [{symbol}]: {tick_events}")
+            if "part1_filled" in tick_events or "part2_filled" in tick_events:
+                asyncio.create_task(_notify_entry_for_admin(symbol, exchange))
     except Exception as e:
         logger.error(f"Автотрейдинг: ошибка обработки тика {symbol}: {e}")
 
@@ -144,6 +146,22 @@ async def _run_autotrading_for_admin(
             logger.info(f"Автотрейдинг [{symbol}]: сетап найден, классификация={result['classification']}, signal_id={result['signal_id']}")
     except Exception as e:
         logger.error(f"Автотрейдинг: ошибка обработки импульса {symbol} [{exchange}]: {e}")
+
+
+async def _notify_entry_for_admin(symbol: str, exchange: str):
+    """
+    Отчёт о факте входа в сделку (срабатывание трейлинг-триггера части 1/2) --
+    отдельно от исходного запроса подтверждения, который уходит ДО входа.
+    Фоновая задача, не блокирует обработку тиков других символов.
+    """
+    try:
+        snapshot = live_trading.get_position_snapshot(symbol)
+        if snapshot is None:
+            return
+        async with aiohttp.ClientSession() as session:
+            await send_text(session, snapshot["chat_id"], live_trading.format_entry_report(symbol, exchange, snapshot))
+    except Exception as e:
+        logger.error(f"Автотрейдинг: ошибка отправки отчёта о входе {symbol}: {e}")
 
 
 async def fetch_current_symbol_lists() -> tuple[list[str], list[str]]:

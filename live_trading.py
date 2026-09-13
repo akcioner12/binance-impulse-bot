@@ -17,6 +17,7 @@ import position_manager
 import order_executor
 import market_data
 import trade_signal_ux
+from notifier import send_text
 
 logger = logging.getLogger(__name__)
 
@@ -97,7 +98,7 @@ async def execute_setup(
 
     if classification == "continuation":
         return await _open_continuation_position(
-            chat_id, symbol, exchange, direction, current_price, profile, analysis, signal_id, size_multiplier,
+            session, chat_id, symbol, exchange, direction, current_price, profile, analysis, signal_id, size_multiplier,
         )
     return await _create_pending_reversal_setup(
         session, chat_id, symbol, exchange, direction, current_price,
@@ -105,8 +106,27 @@ async def execute_setup(
     )
 
 
+def format_entry_report(symbol: str, exchange: str, snapshot: dict) -> str:
+    """Отчёт пользователю о факте входа в сделку -- цена, объём, SL, сетка TP."""
+    direction_word = "🟢 LONG" if snapshot["direction"] == "long" else "🔴 SHORT"
+    tp_lines = "\n".join(
+        f"TP{idx}: `{tp['level']:.6g}` ({tp['size_pct']}%)"
+        for idx, tp in enumerate(snapshot["take_profits"], start=1)
+    )
+    return (
+        f"✅ *Вход в сделку: {symbol}* [{exchange}]\n\n"
+        f"Направление: {direction_word}\n"
+        f"Цена входа: `{snapshot['avg_entry_price']:.6g}`\n"
+        f"Объём: `{snapshot['quantity']:.6g}`\n"
+        f"SL: `{snapshot['stop_loss']:.6g}`\n"
+        f"{tp_lines}\n"
+        f"TP4: трейлинг (Chandelier), {snapshot['tp4_size_pct']}% объёма\n\n"
+        f"Риск на сделку: `{snapshot['risk_amount']:.2f}`"
+    )
+
+
 async def _open_continuation_position(
-    chat_id: int, symbol: str, exchange: str, direction: str, current_price: float,
+    session, chat_id: int, symbol: str, exchange: str, direction: str, current_price: float,
     profile: dict, analysis: dict, signal_id: int, size_multiplier: float = 1.0,
 ) -> dict:
     trade_direction = position_manager.determine_trade_direction(direction, "continuation")
@@ -134,6 +154,10 @@ async def _open_continuation_position(
     )
     _open_positions[symbol] = {"chat_id": chat_id, "state": state, "atr_1h": analysis["atr_1h"]}
     trading_storage.update_trade_signal_status(signal_id, "executed")
+
+    snapshot = get_position_snapshot(symbol)
+    if snapshot is not None:
+        await send_text(session, chat_id, format_entry_report(symbol, exchange, snapshot))
 
     return {"classification": "continuation", "signal_id": signal_id, "position_id": result["position_id"]}
 
@@ -170,6 +194,28 @@ async def _create_pending_reversal_setup(
         "atr_1h": analysis["atr_1h"], "magnet_levels": levels, "profile": profile,
     }
     return {"classification": "reversal", "signal_id": signal_id, "magnet_levels": levels}
+
+
+def get_position_snapshot(symbol: str) -> dict | None:
+    """
+    Снимок открытой позиции для отчёта пользователю о факте входа в сделку --
+    цена, объём, SL, сетка TP1-3 (TP4 не фиксирован -- трейлинг, только его доля).
+    """
+    entry = _open_positions.get(symbol)
+    if entry is None:
+        return None
+    state = entry["state"]
+    tp3_total_pct = sum(tp["size_pct"] for tp in state.take_profits)
+    return {
+        "chat_id": entry["chat_id"],
+        "direction": state.direction,
+        "avg_entry_price": state.avg_entry_price,
+        "quantity": state.quantity,
+        "stop_loss": state.stop_loss,
+        "take_profits": [{"level": tp["level"], "size_pct": tp["size_pct"]} for tp in state.take_profits],
+        "tp4_size_pct": 100 - tp3_total_pct,
+        "risk_amount": state.quantity * abs(state.avg_entry_price - state.stop_loss),
+    }
 
 
 def handle_price_tick(symbol: str, price: float) -> list[str] | None:
