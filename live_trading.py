@@ -126,6 +126,11 @@ async def _create_pending_reversal_setup(
     _pending_setups[symbol] = {
         "chat_id": chat_id, "exchange": exchange, "signal_id": signal_id,
         "impulse_direction": direction, "window_start_price": window_start_price,
+        # Точка отсчёта потолка ожидания -- НЕ window_start_price детектора (он может
+        # быть сильно устаревшим, например "цена ~24ч назад"), а цена на момент, когда
+        # этот конкретный сетап реально начал мониториться. Ставится лениво на первом
+        # тике в _process_pending_setup_tick, аналогично extreme_price у триггеров.
+        "cap_reference_price": None,
         "trigger_part1": entry_engine.create_part1_trigger(direction, analysis["atr_15m"]),
         "trigger_part2": entry_engine.create_part2_trigger(direction, analysis["atr_15m"]),
         "part_size": total_size / 2,
@@ -189,6 +194,9 @@ def _process_pending_setup_tick(symbol: str, price: float) -> list[str] | None:
     setup = _pending_setups[symbol]
     events = []
 
+    if setup["cap_reference_price"] is None:
+        setup["cap_reference_price"] = price
+
     if not setup["trigger_part1"].fired and setup["trigger_part1"].update(price):
         _handle_part_fill(setup, symbol, price)
         events.append("part1_filled")
@@ -201,7 +209,7 @@ def _process_pending_setup_tick(symbol: str, price: float) -> list[str] | None:
         del _pending_setups[symbol]
         events.append("setup_complete")
     elif not events and not setup["trigger_part1"].fired and not setup["trigger_part2"].fired:
-        if magnet_levels_module.is_beyond_extension_cap(setup["window_start_price"], price):
+        if magnet_levels_module.is_beyond_extension_cap(setup["cap_reference_price"], price):
             trading_storage.update_trade_signal_status(setup["signal_id"], "expired")
             del _pending_setups[symbol]
             events.append("setup_expired")
