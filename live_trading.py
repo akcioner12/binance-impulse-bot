@@ -24,6 +24,12 @@ logger = logging.getLogger(__name__)
 _pending_setups: dict[str, dict] = {}
 _open_positions: dict[str, dict] = {}
 
+# Очередь уведомлений о действиях бота по открытым позициям (TP, безубыток+,
+# включение трейлинга, закрытие) -- копится синхронно внутри _process_open_
+# position_tick (там нет доступа к event loop для отправки в Telegram) и
+# вычитывается main.py на каждом тике через pop_notifications().
+_notification_queue: list[dict] = []
+
 DEFAULT_ATR_MULTIPLIER = 1.5
 
 # Защита от многоволновых манипуляций (прод-инцидент 12-13.09: LSKUSDT/POWRUSDT/
@@ -296,6 +302,59 @@ def _persist_position_progress(state: order_executor.OpenPositionState) -> None:
     )
 
 
+def _queue_notification(chat_id: int, text: str) -> None:
+    _notification_queue.append({"chat_id": chat_id, "text": text})
+
+
+def pop_notifications() -> list[dict]:
+    """Вычитывает и очищает накопленные уведомления -- вызывается из main.py на каждом тике."""
+    items = list(_notification_queue)
+    _notification_queue.clear()
+    return items
+
+
+def _format_tp_report(symbol: str, event: dict, state: order_executor.OpenPositionState) -> str:
+    tp_number = event["event"][2]  # "tp1_hit" -> "1"
+    pct_of_total = event["size_closed"] / state.quantity * 100
+    remaining_pct = state.remaining_quantity / state.quantity * 100
+    return (
+        f"🎯 *TP{tp_number} исполнен: {symbol}*\n\n"
+        f"Цена: `{event['exit_price']:.6g}`\n"
+        f"Зафиксировано: {pct_of_total:.0f}% объёма\n"
+        f"PnL: `{event['pnl_delta']:+.2f}`\n"
+        f"Остаток в позиции: {remaining_pct:.0f}%"
+    )
+
+
+def _format_breakeven_report(symbol: str, event: dict) -> str:
+    return (
+        f"🛡 *SL перенесён в безубыток+: {symbol}*\n\n"
+        f"Новый стоп: `{event['new_stop_loss']:.6g}`\n"
+        f"Комиссии обеих ног сделки покрыты — риск на этой сделке закрыт"
+    )
+
+
+def _format_chandelier_activated_report(symbol: str, state: order_executor.OpenPositionState) -> str:
+    remaining_pct = state.remaining_quantity / state.quantity * 100
+    return (
+        f"🔄 *Включён трейлинг-стоп TP4: {symbol}*\n\n"
+        f"Оставшиеся {remaining_pct:.0f}% объёма теперь едут за ценой (Chandelier), "
+        f"фиксированной цели больше нет"
+    )
+
+
+def _format_close_report(symbol: str, event: dict) -> str:
+    is_chandelier = event["event"] == "closed_chandelier"
+    header = "Сделка закрыта трейлингом TP4" if is_chandelier else "Стоп сработал"
+    icon = "🏁" if is_chandelier else "🛑"
+    return (
+        f"{icon} *{header}: {symbol}*\n\n"
+        f"Цена закрытия: `{event['exit_price']:.6g}`\n"
+        f"PnL: `{event['pnl_delta']:+.2f}`\n"
+        f"Позиция полностью закрыта"
+    )
+
+
 def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
     entry = _open_positions[symbol]
     state = entry["state"]
@@ -306,6 +365,7 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
     if stop_event is not None:
         trading_storage.adjust_paper_balance(chat_id, stop_event["pnl_delta"])
         trading_storage.close_position(state.position_id, realized_pnl=stop_event["pnl_delta"])
+        _queue_notification(chat_id, _format_close_report(symbol, stop_event))
         del _open_positions[symbol]
         return [stop_event["event"]]
 
@@ -313,8 +373,12 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
     for event in tp_events:
         if event["event"].startswith("tp"):
             trading_storage.adjust_paper_balance(chat_id, event["pnl_delta"])
+            _queue_notification(chat_id, _format_tp_report(symbol, event, state))
         elif event["event"] == "moved_to_breakeven":
             trading_storage.update_position_stop_loss(state.position_id, event["new_stop_loss"])
+            _queue_notification(chat_id, _format_breakeven_report(symbol, event))
+        elif event["event"] == "chandelier_activated":
+            _queue_notification(chat_id, _format_chandelier_activated_report(symbol, state))
         events.append(event["event"])
 
     if tp_events or state.chandelier is not None:

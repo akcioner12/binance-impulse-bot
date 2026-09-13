@@ -84,6 +84,8 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
             logger.info(f"Автотрейдинг [{symbol}]: {tick_events}")
             if "part1_filled" in tick_events or "part2_filled" in tick_events:
                 asyncio.create_task(_notify_entry_for_admin(symbol, exchange))
+        for note in live_trading.pop_notifications():
+            asyncio.create_task(_send_notification(note["chat_id"], note["text"]))
     except Exception as e:
         logger.error(f"Автотрейдинг: ошибка обработки тика {symbol}: {e}")
 
@@ -162,6 +164,15 @@ async def _notify_entry_for_admin(symbol: str, exchange: str):
             await send_text(session, snapshot["chat_id"], live_trading.format_entry_report(symbol, exchange, snapshot))
     except Exception as e:
         logger.error(f"Автотрейдинг: ошибка отправки отчёта о входе {symbol}: {e}")
+
+
+async def _send_notification(chat_id: int, text: str):
+    """Отправляет одно уведомление о действии бота по открытой позиции (TP, безубыток+, трейлинг, закрытие)."""
+    try:
+        async with aiohttp.ClientSession() as session:
+            await send_text(session, chat_id, text)
+    except Exception as e:
+        logger.error(f"Автотрейдинг: ошибка отправки уведомления: {e}")
 
 
 async def fetch_current_symbol_lists() -> tuple[list[str], list[str]]:

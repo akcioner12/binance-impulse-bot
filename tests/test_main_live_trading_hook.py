@@ -135,3 +135,32 @@ async def test_notify_entry_for_admin_noop_when_no_position():
 async def test_notify_entry_for_admin_swallows_errors():
     with patch("main.live_trading.get_position_snapshot", side_effect=RuntimeError("boom")):
         await main._notify_entry_for_admin("LSKUSDT", "Binance")  # не должно упасть
+
+
+@pytest.mark.asyncio
+async def test_on_kline_close_dispatches_queued_lifecycle_notifications():
+    with patch.object(main.tracker, "update", return_value=None), \
+         patch.object(main.tracker, "is_active", return_value=True), \
+         patch("main.live_trading.handle_price_tick", return_value=["tp1_hit"]), \
+         patch("main.live_trading.pop_notifications", return_value=[{"chat_id": 111, "text": "TP1 исполнен"}]), \
+         patch("main.asyncio.create_task") as mock_create_task:
+        mock_create_task.side_effect = lambda coro: coro.close()
+        await main.on_kline_close("BTCUSDT", "Binance", 100.0, 1000)
+
+    assert mock_create_task.call_count == 1  # только уведомление, part1/part2_filled тут нет
+
+
+@pytest.mark.asyncio
+async def test_send_notification_sends_text():
+    with patch("main.send_text", new=AsyncMock()) as mock_send:
+        await main._send_notification(111, "тест")
+
+    mock_send.assert_called_once()
+    assert mock_send.call_args[0][1] == 111
+    assert mock_send.call_args[0][2] == "тест"
+
+
+@pytest.mark.asyncio
+async def test_send_notification_swallows_errors():
+    with patch("main.send_text", new=AsyncMock(side_effect=RuntimeError("boom"))):
+        await main._send_notification(111, "тест")  # не должно упасть
