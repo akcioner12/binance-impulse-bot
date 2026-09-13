@@ -7,6 +7,7 @@ paper-позиции. Состояние (ожидающие сетапы, от�
 """
 
 import logging
+from datetime import datetime, timedelta
 
 import trading_storage
 import impulse_analysis
@@ -23,6 +24,16 @@ _pending_setups: dict[str, dict] = {}
 _open_positions: dict[str, dict] = {}
 
 DEFAULT_ATR_MULTIPLIER = 1.5
+
+# Защита от многоволновых манипуляций (прод-инцидент 12-13.09: LSKUSDT/POWRUSDT/
+# ARKUSDT/VTHOUSDT -- все 5 убыточных сделок за ночь оказались РАННИМИ волнами
+# продолжающегося пампа, а не его финальным разворотом: первый откат выглядел
+# как истощение, бот заходил в шорт на реальном (не рыночном) трейлинг-откате,
+# но манипуляция возобновлялась новой волной и выбивала стоп). Чем больше раз
+# подряд символ уже сигналил за последние WAVE_LOOKBACK_HOURS часов, тем меньше
+# доверия к тому, что именно ЭТА волна -- последняя.
+WAVE_LOOKBACK_HOURS = 4
+WAVE_SIZE_MULTIPLIERS = {0: 1.0, 1: 0.5}  # wave_count >= 2 -> сетап пропускается
 
 
 async def handle_new_impulse(
@@ -57,6 +68,19 @@ async def handle_new_impulse(
     return {"classification": classification, "signal_id": signal_id, "awaiting_confirmation": True}
 
 
+def _compute_wave_size_multiplier(chat_id: int, symbol: str, signal_id: int) -> float | None:
+    """
+    Считает, сколько раз символ уже сигналил за последние WAVE_LOOKBACK_HOURS
+    часов (включая текущий сигнал), и возвращает множитель размера позиции.
+    None означает "не входить вообще" -- третья и более поздняя волна подряд.
+    """
+    signal = trading_storage.get_trade_signal(signal_id)
+    signal_time = datetime.strptime(signal["created_at"], "%Y-%m-%d %H:%M:%S")
+    since = (signal_time - timedelta(hours=WAVE_LOOKBACK_HOURS)).strftime("%Y-%m-%d %H:%M:%S")
+    wave_count = trading_storage.count_recent_signals(chat_id, symbol, since) - 1  # без текущего
+    return WAVE_SIZE_MULTIPLIERS.get(wave_count)
+
+
 async def execute_setup(
     session, chat_id: int, symbol: str, exchange: str, direction: str, classification: str,
     current_price: float, window_start_price: float, profile: dict, analysis: dict, signal_id: int,
@@ -65,19 +89,25 @@ async def execute_setup(
     Реально исполняет сетап -- вызывается из trade_signal_ux после подтверждения
     (кнопкой или по таймауту), НЕ напрямую из handle_new_impulse().
     """
+    size_multiplier = _compute_wave_size_multiplier(chat_id, symbol, signal_id)
+    if size_multiplier is None:
+        trading_storage.update_trade_signal_status(signal_id, "expired")
+        logger.info(f"Автотрейдинг [{symbol}]: сетап пропущен -- уже 2+ волны за последние {WAVE_LOOKBACK_HOURS}ч")
+        return {"classification": classification, "signal_id": signal_id, "skipped": "multiwave_protection"}
+
     if classification == "continuation":
         return await _open_continuation_position(
-            chat_id, symbol, exchange, direction, current_price, profile, analysis, signal_id
+            chat_id, symbol, exchange, direction, current_price, profile, analysis, signal_id, size_multiplier,
         )
     return await _create_pending_reversal_setup(
         session, chat_id, symbol, exchange, direction, current_price,
-        window_start_price, profile, analysis, signal_id,
+        window_start_price, profile, analysis, signal_id, size_multiplier,
     )
 
 
 async def _open_continuation_position(
     chat_id: int, symbol: str, exchange: str, direction: str, current_price: float,
-    profile: dict, analysis: dict, signal_id: int,
+    profile: dict, analysis: dict, signal_id: int, size_multiplier: float = 1.0,
 ) -> dict:
     trade_direction = position_manager.determine_trade_direction(direction, "continuation")
     stop_loss = position_manager.calculate_stop_loss(
@@ -85,7 +115,9 @@ async def _open_continuation_position(
         analysis["atr_1h"], DEFAULT_ATR_MULTIPLIER, profile["sl_fixed_percent"],
     )
     balance = trading_storage.get_paper_balance(chat_id) or 0.0
-    size = position_manager.calculate_position_size(balance, profile["risk_percent"], current_price, stop_loss)
+    size = position_manager.calculate_position_size(
+        balance, profile["risk_percent"], current_price, stop_loss
+    ) * size_multiplier
 
     result = order_executor.open_paper_position(
         chat_id=chat_id, symbol=symbol, exchange=exchange, direction=trade_direction,
@@ -107,7 +139,7 @@ async def _open_continuation_position(
 
 async def _create_pending_reversal_setup(
     session, chat_id: int, symbol: str, exchange: str, direction: str, current_price: float,
-    window_start_price: float, profile: dict, analysis: dict, signal_id: int,
+    window_start_price: float, profile: dict, analysis: dict, signal_id: int, size_multiplier: float = 1.0,
 ) -> dict:
     daily_candles = await market_data.fetch_klines(session, exchange, symbol, "1d", limit=90)
     weekly_candles = await market_data.fetch_klines(session, exchange, symbol, "1w", limit=52)
@@ -121,7 +153,7 @@ async def _create_pending_reversal_setup(
     balance = trading_storage.get_paper_balance(chat_id) or 0.0
     total_size = position_manager.calculate_position_size(
         balance, profile["risk_percent"], current_price, estimated_stop_loss
-    )
+    ) * size_multiplier
 
     _pending_setups[symbol] = {
         "chat_id": chat_id, "exchange": exchange, "signal_id": signal_id,

@@ -26,7 +26,8 @@ ANALYSIS_RESULT_CONTINUATION = {
 async def test_continuation_opens_position_immediately():
     with patch("live_trading.trading_storage.get_paper_balance", return_value=1000.0), \
          patch("live_trading.trading_storage.update_trade_signal_status") as mock_update_status, \
-         patch("live_trading.trading_storage.create_position", return_value=7):
+         patch("live_trading.trading_storage.create_position", return_value=7), \
+         patch("live_trading._compute_wave_size_multiplier", return_value=1.0):
         result = await live_trading.execute_setup(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="up",
             classification="continuation", current_price=100.0, window_start_price=70.0,
@@ -45,7 +46,8 @@ async def test_continuation_opens_position_immediately():
 async def test_continuation_short_direction_for_down_impulse():
     with patch("live_trading.trading_storage.get_paper_balance", return_value=1000.0), \
          patch("live_trading.trading_storage.update_trade_signal_status"), \
-         patch("live_trading.trading_storage.create_position", return_value=8):
+         patch("live_trading.trading_storage.create_position", return_value=8), \
+         patch("live_trading._compute_wave_size_multiplier", return_value=1.0):
         await live_trading.execute_setup(
             session=None, chat_id=111, symbol="ETHUSDT", exchange="Binance", direction="down",
             classification="continuation", current_price=100.0, window_start_price=140.0,

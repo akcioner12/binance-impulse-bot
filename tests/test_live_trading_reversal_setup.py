@@ -28,7 +28,8 @@ async def test_reversal_creates_pending_setup_with_both_triggers():
         return []  # магнит-уровни на пустой истории -> просто пустой список уровней
 
     with patch("live_trading.trading_storage.get_paper_balance", return_value=1000.0), \
-         patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=fake_fetch_klines)):
+         patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=fake_fetch_klines)), \
+         patch("live_trading._compute_wave_size_multiplier", return_value=1.0):
         result = await live_trading.execute_setup(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="up",
             classification="reversal", current_price=100.0, window_start_price=70.0,
