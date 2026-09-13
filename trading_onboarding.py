@@ -92,7 +92,7 @@ async def _apply_defaults_and_ask_api_key(session, chat_id: int):
         tp_split_preset=DEFAULT_PROFILE["tp_split_preset"],
         max_concurrent_trades=DEFAULT_PROFILE["max_concurrent_trades"],
     )
-    state = {"step": "risk_percent", "data": {}}
+    state = {"step": None, "data": {}}
     _onboarding[chat_id] = state
     await _ask_exchange_choice_step(session, chat_id, state, prefix="Параметры сохранены ✅\n\n")
 
