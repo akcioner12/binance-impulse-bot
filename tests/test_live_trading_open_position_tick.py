@@ -23,7 +23,8 @@ def _make_open_position():
 
 def test_tick_tp1_hit_adjusts_paper_balance():
     _make_open_position()
-    with patch("live_trading.trading_storage.adjust_paper_balance") as mock_adjust:
+    with patch("live_trading.trading_storage.adjust_paper_balance") as mock_adjust, \
+         patch("live_trading.trading_storage.update_position_progress"):
         events = live_trading.handle_price_tick("BTCUSDT", price=110.0)
 
     assert events == ["tp1_hit"]
@@ -50,7 +51,8 @@ def test_tick_moved_to_breakeven_updates_db_stop_loss():
     state.remaining_quantity = 3.0
 
     with patch("live_trading.trading_storage.adjust_paper_balance"), \
-         patch("live_trading.trading_storage.update_position_stop_loss") as mock_update_sl:
+         patch("live_trading.trading_storage.update_position_stop_loss") as mock_update_sl, \
+         patch("live_trading.trading_storage.update_position_progress"):
         events = live_trading.handle_price_tick("BTCUSDT", price=120.0)  # TP2 -> безубыток+
 
     assert "tp2_hit" in events

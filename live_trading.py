@@ -124,6 +124,7 @@ async def _open_continuation_position(
         fills=[(current_price, size)], sl_method=profile["sl_method"],
         atr_1h=analysis["atr_1h"], atr_multiplier=DEFAULT_ATR_MULTIPLIER,
         fixed_percent=profile["sl_fixed_percent"], tp_split_preset=profile["tp_split_preset"],
+        breakeven_after_tp=profile["breakeven_after_tp"],
     )
     state = order_executor.OpenPositionState(
         position_id=result["position_id"], direction=trade_direction,
@@ -198,6 +199,57 @@ def handle_price_tick(symbol: str, price: float) -> list[str] | None:
     return events or None
 
 
+def restore_open_positions() -> int:
+    """
+    Восстанавливает открытые позиции из БД в _open_positions при старте бота.
+    Состояние сделки (SL/TP/Chandelier) живёт только в памяти процесса и не
+    переживает рестарт иначе -- без этого любой редеплой во время открытой
+    сделки "осиротит" её навсегда (см. прод-инцидент 12-13.09: VTHOUSDT/
+    POWRUSDT остались висеть status='open' без какого-либо мониторинга).
+    Возвращает число восстановленных позиций.
+    """
+    restored = 0
+    for row in trading_storage.get_all_open_positions():
+        take_profits = position_manager.calculate_take_profits(
+            row["avg_entry_price"], row["original_stop_loss"], row["direction"], row["tp_split_preset"],
+        )
+        state = order_executor.OpenPositionState(
+            position_id=row["id"], direction=row["direction"],
+            avg_entry_price=row["avg_entry_price"], quantity=row["quantity"],
+            stop_loss=row["stop_loss"], take_profits=take_profits,
+            breakeven_after_tp=row["breakeven_after_tp"],
+        )
+        for idx, filled_key in enumerate(("tp1_filled", "tp2_filled", "tp3_filled")):
+            if idx < len(state.take_profits):
+                state.take_profits[idx]["filled"] = bool(row[filled_key])
+        state.remaining_quantity = row["remaining_quantity"]
+        state.tp_hit_count = int(row["tp1_filled"]) + int(row["tp2_filled"]) + int(row["tp3_filled"])
+
+        if row["chandelier_active"]:
+            chandelier = position_manager.ChandelierTrailingStop(direction=row["direction"])
+            chandelier.extreme_price = row["chandelier_extreme_price"]
+            chandelier.stop_price = row["chandelier_stop_price"]
+            state.chandelier = chandelier
+
+        _open_positions[row["symbol"]] = {"chat_id": row["chat_id"], "state": state, "atr_1h": row["atr_1h"]}
+        restored += 1
+    return restored
+
+
+def _persist_position_progress(state: order_executor.OpenPositionState) -> None:
+    chandelier = state.chandelier
+    trading_storage.update_position_progress(
+        state.position_id,
+        tp1_filled=state.take_profits[0]["filled"] if len(state.take_profits) > 0 else False,
+        tp2_filled=state.take_profits[1]["filled"] if len(state.take_profits) > 1 else False,
+        tp3_filled=state.take_profits[2]["filled"] if len(state.take_profits) > 2 else False,
+        remaining_quantity=state.remaining_quantity,
+        chandelier_active=chandelier is not None,
+        chandelier_extreme_price=chandelier.extreme_price if chandelier else None,
+        chandelier_stop_price=chandelier.stop_price if chandelier else None,
+    )
+
+
 def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
     entry = _open_positions[symbol]
     state = entry["state"]
@@ -218,6 +270,9 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
         elif event["event"] == "moved_to_breakeven":
             trading_storage.update_position_stop_loss(state.position_id, event["new_stop_loss"])
         events.append(event["event"])
+
+    if tp_events or state.chandelier is not None:
+        _persist_position_progress(state)
 
     return events or None
 
@@ -272,7 +327,7 @@ def _handle_part_fill(setup: dict, symbol: str, price: float) -> None:
         chat_id=setup["chat_id"], symbol=symbol, exchange=setup["exchange"], direction=direction,
         fills=fills, sl_method=profile["sl_method"], atr_1h=setup["atr_1h"],
         atr_multiplier=DEFAULT_ATR_MULTIPLIER, fixed_percent=profile["sl_fixed_percent"],
-        tp_split_preset=profile["tp_split_preset"],
+        tp_split_preset=profile["tp_split_preset"], breakeven_after_tp=profile["breakeven_after_tp"],
     )
     new_state = order_executor.OpenPositionState(
         position_id=result["position_id"], direction=direction,

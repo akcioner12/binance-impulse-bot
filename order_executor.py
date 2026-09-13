@@ -25,6 +25,7 @@ def open_paper_position(
     atr_multiplier: float,
     fixed_percent: float | None,
     tp_split_preset: str,
+    breakeven_after_tp: int = 2,
 ) -> dict:
     """
     fills — список (цена, размер) исполненных частей (часть 1/часть 2 из entry_engine).
@@ -40,6 +41,8 @@ def open_paper_position(
     position_id = trading_storage.create_position(
         chat_id=chat_id, symbol=symbol, exchange=exchange, direction=direction,
         mode="paper", avg_entry_price=avg_entry_price, quantity=quantity, stop_loss=stop_loss,
+        original_stop_loss=stop_loss, tp_split_preset=tp_split_preset,
+        breakeven_after_tp=breakeven_after_tp, atr_1h=atr_1h,
     )
 
     return {
