@@ -160,3 +160,128 @@ class PriceWindowTracker:
             )
 
         return None
+
+
+DUMP_WINDOW_DAYS = 10
+DAY_SECONDS = 86400
+
+
+class DailyHighTracker:
+    """
+    Скользящий 10-дневный максимум для детекции дампов -- ТОЛЬКО для
+    автотрейдинга (см. docs/superpowers/specs/2026-09-14-multiday-dump-window-design.md).
+    Не участвует в текстовых алертах подписчикам -- те остаются на
+    PriceWindowTracker (24ч), который не меняется.
+
+    В отличие от PriceWindowTracker, хранит не полный тик-буфер, а только
+    дневные максимумы: до DUMP_WINDOW_DAYS-1 завершённых суток + текущий
+    (незавершённый) день, обновляемый на каждом тике. Дёшево по памяти на
+    несколько сотен символов.
+    """
+
+    def __init__(self):
+        self._daily_highs: dict[str, deque] = {}
+        self._current_day_high: dict[str, float] = {}
+        self._current_day_start: dict[str, int] = {}
+        # symbol -> {"level": 30.0, "anchor_price": float}
+        self._active: dict[str, dict] = {}
+
+    def is_active(self, symbol: str) -> bool:
+        return symbol in self._active
+
+    def seed_history(self, symbol: str, daily_highs: list[float], current_day_high: float, current_day_start_ts: int):
+        """
+        Заполняет историю дневных максимумов при старте бота -- без этого
+        после каждого рестарта Railway 10-дневное окно "теряет память" так
+        же, как раньше терял её 24ч-буфер PriceWindowTracker (см. инцидент
+        13.09.2026, main._seed_price_history). Не перезаписывает, если по
+        символу уже накоплены реальные тики.
+        """
+        if symbol in self._current_day_start:
+            return
+        self._daily_highs[symbol] = deque(daily_highs, maxlen=DUMP_WINDOW_DAYS - 1)
+        self._current_day_high[symbol] = current_day_high
+        self._current_day_start[symbol] = current_day_start_ts
+
+    def _day_start(self, ts: int) -> int:
+        return ts - (ts % DAY_SECONDS)
+
+    def _advance_day(self, symbol: str, price: float, ts: int):
+        day_start = self._day_start(ts)
+        known_start = self._current_day_start.get(symbol)
+
+        if known_start is None:
+            self._current_day_start[symbol] = day_start
+            self._current_day_high[symbol] = price
+            return
+
+        if day_start > known_start:
+            highs = self._daily_highs.setdefault(symbol, deque(maxlen=DUMP_WINDOW_DAYS - 1))
+            highs.append(self._current_day_high[symbol])
+            self._current_day_start[symbol] = day_start
+            self._current_day_high[symbol] = price
+            return
+
+        self._current_day_high[symbol] = max(self._current_day_high[symbol], price)
+
+    def _rolling_max(self, symbol: str) -> float:
+        highs = list(self._daily_highs.get(symbol, ()))
+        current = self._current_day_high.get(symbol)
+        if current is not None:
+            highs.append(current)
+        return max(highs) if highs else 0.0
+
+    def update(self, symbol: str, exchange: str, price: float, ts: int | None = None) -> ImpulseSignal | None:
+        """
+        Аналог PriceWindowTracker.update(), но база -- скользящий 10-дневный
+        максимум high вместо цены "24ч назад", и направление всегда "down".
+        Пока сигнал активен, база зафиксирована (anchor_price) -- живой
+        rolling max может уменьшиться сам по себе при выпадении старого
+        пика из окна, это не должно сбрасывать уже идущий сигнал.
+        """
+        ts = ts or int(time.time())
+        self._advance_day(symbol, price, ts)
+
+        state = self._active.get(symbol)
+        base_price = state["anchor_price"] if state else self._rolling_max(symbol)
+        if base_price <= 0:
+            return None
+
+        change_pct = (price - base_price) / base_price * 100
+        abs_change = abs(change_pct)
+
+        if change_pct >= 0:
+            if state:
+                del self._active[symbol]
+            return None
+
+        if state:
+            reset_threshold = state["level"] - IMPULSE_RESET_HYSTERESIS
+            if abs_change < reset_threshold:
+                del self._active[symbol]
+                logger.info(f"{symbol}: дамп затух (откат до {abs_change:.1f}%, был на уровне {state['level']:.0f}%)")
+                return None
+
+            next_level = state["level"] + IMPULSE_STEP
+            if abs_change >= next_level:
+                level = next_level
+                while abs_change >= level + IMPULSE_STEP:
+                    level += IMPULSE_STEP
+                self._active[symbol] = {"level": level, "anchor_price": base_price}
+                return ImpulseSignal(
+                    symbol=symbol, exchange=exchange, direction="down", level=level,
+                    change_pct=round(change_pct, 2),
+                    window_start_price=base_price, current_price=price,
+                    is_new_peak=True,
+                )
+            return None
+
+        if abs_change >= IMPULSE_START_THRESHOLD:
+            self._active[symbol] = {"level": IMPULSE_START_THRESHOLD, "anchor_price": base_price}
+            return ImpulseSignal(
+                symbol=symbol, exchange=exchange, direction="down", level=IMPULSE_START_THRESHOLD,
+                change_pct=round(change_pct, 2),
+                window_start_price=base_price, current_price=price,
+                is_new_peak=False,
+            )
+        return None
