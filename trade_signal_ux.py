@@ -17,7 +17,7 @@ import asyncio
 import logging
 
 import aiohttp
-from notifier import send_text_with_keyboard
+from notifier import send_text_with_keyboard, send_text
 
 logger = logging.getLogger(__name__)
 
@@ -90,15 +90,27 @@ async def handle_confirmation_callback(symbol: str, choice: str) -> bool:
 
 
 async def _resolve(symbol: str) -> None:
+    """
+    Прод-инцидент 14.09.2026: необработанное исключение внутри execute_fn
+    (вызывается из голой asyncio.create_task() без try/except выше по цепочке
+    -- ни кнопка, ни таймаут) оставляло сетап "подвешенным" навсегда без
+    единого сообщения ни в лог, ни админу. execute_fn оборачивается в
+    try/except, чтобы сбой был виден и не блокировал остальные сетапы.
+    """
     state = _awaiting_confirmation.get(symbol)
     if state is None or state["resolved"]:
         return
     state["resolved"] = True
     del _awaiting_confirmation[symbol]
 
-    async with aiohttp.ClientSession() as session:
-        await state["execute_fn"](
-            session, state["chat_id"], symbol, state["exchange"], state["direction"],
-            state["classification"], state["current_price"], state["window_start_price"],
-            state["profile"], state["analysis"], state["signal_id"],
-        )
+    try:
+        async with aiohttp.ClientSession() as session:
+            await state["execute_fn"](
+                session, state["chat_id"], symbol, state["exchange"], state["direction"],
+                state["classification"], state["current_price"], state["window_start_price"],
+                state["profile"], state["analysis"], state["signal_id"],
+            )
+    except Exception as e:
+        logger.error(f"Ошибка исполнения сетапа {symbol}: {e}", exc_info=True)
+        async with aiohttp.ClientSession() as session:
+            await send_text(session, state["chat_id"], f"⚠️ Не удалось исполнить сделку {symbol}: {e}")

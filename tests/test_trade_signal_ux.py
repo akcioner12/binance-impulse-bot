@@ -119,6 +119,39 @@ async def test_timeout_executes_when_not_confirmed_by_button():
 
 
 @pytest.mark.asyncio
+async def test_resolve_notifies_admin_and_clears_state_when_execute_fn_raises():
+    """
+    Прод-инцидент 14.09.2026: BRUSDT завис в подтверждении навсегда -- ни кнопка,
+    ни 5-минутный таймаут не срабатывали, без единого сообщения в лог/юзеру.
+    Похоже на необработанное исключение внутри execute_fn -- задача, созданная
+    через голый asyncio.create_task() без try/except, теряет исключение молча.
+    Заворачиваем execute_fn в try/except: ошибка не должна оставлять сетап
+    зависшим навечно и должна быть видна и в логе, и админу в Telegram.
+    """
+    async def failing_execute_fn(*args):
+        raise RuntimeError("boom")
+
+    with patch("trade_signal_ux.send_text_with_keyboard", new=AsyncMock()), \
+         patch("trade_signal_ux.asyncio.create_task") as mock_create_task:
+        mock_create_task.side_effect = lambda coro: coro.close()
+        await trade_signal_ux.request_confirmation(
+            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="up",
+            classification="reversal", current_price=100.0, window_start_price=76.0,
+            profile=PROFILE, analysis=ANALYSIS, signal_id=55, magnet_levels=[],
+            execute_fn=failing_execute_fn,
+        )
+
+    with patch("trade_signal_ux.send_text", new=AsyncMock()) as mock_send:
+        handled = await trade_signal_ux.handle_confirmation_callback("BTCUSDT", "defaults")
+
+    assert handled is True
+    assert trade_signal_ux.is_awaiting_confirmation("BTCUSDT") is False  # не зависает навсегда
+    mock_send.assert_called_once()
+    assert mock_send.call_args[0][1] == 111
+    assert "BTCUSDT" in mock_send.call_args[0][2]
+
+
+@pytest.mark.asyncio
 async def test_button_confirmation_prevents_later_timeout_from_executing_again():
     execute_fn = AsyncMock()
     with patch("trade_signal_ux.send_text_with_keyboard", new=AsyncMock()), \

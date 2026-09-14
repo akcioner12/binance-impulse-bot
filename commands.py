@@ -238,21 +238,29 @@ async def _handle_callback_query(session: aiohttp.ClientSession, callback_query:
 
 
 async def _process_updates_once(session: aiohttp.ClientSession, offset: int) -> int:
-    """Забирает и обрабатывает одну пачку апдейтов. Возвращает новый offset."""
+    """
+    Забирает и обрабатывает одну пачку апдейтов. Возвращает новый offset.
+    Необработанное исключение при обработке ОДНОГО апдейта не должно рушить
+    весь цикл long polling (прод-инцидент 14.09.2026: без этого один сбойный
+    колбэк мог молча "убить" обработку всех последующих команд/кнопок).
+    """
     updates = await _get_updates(session, offset)
     for update in updates:
         offset = update["update_id"] + 1
 
-        callback_query = update.get("callback_query")
-        if callback_query:
-            await _handle_callback_query(session, callback_query)
-            continue
+        try:
+            callback_query = update.get("callback_query")
+            if callback_query:
+                await _handle_callback_query(session, callback_query)
+                continue
 
-        message = update.get("message")
-        if not message or "text" not in message:
-            continue
-        chat_id = message["chat"]["id"]
-        await _handle_command(session, chat_id, message["text"])
+            message = update.get("message")
+            if not message or "text" not in message:
+                continue
+            chat_id = message["chat"]["id"]
+            await _handle_command(session, chat_id, message["text"])
+        except Exception as e:
+            logger.error(f"Ошибка обработки апдейта {update.get('update_id')}: {e}", exc_info=True)
     return offset
 
 

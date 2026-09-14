@@ -67,3 +67,23 @@ async def test_callback_query_dispatched_to_onboarding_handler():
     mock_cb.assert_called_once_with(None, 111, "trading_setup:defaults")
     mock_answer.assert_called_once_with(None, "cbq-1")
     assert offset == 2
+
+
+@pytest.mark.asyncio
+async def test_process_updates_once_survives_exception_in_one_update():
+    """
+    Прод-инцидент 14.09.2026: необработанное исключение при обработке ОДНОГО
+    апдейта (например, колбэка кнопки) могло молча "убить" весь цикл long
+    polling -- ни эта, ни последующие команды/кнопки больше не обрабатывались
+    бы, без единого сообщения в лог. Один сбойный апдейт не должен блокировать
+    обработку остальных в этой же пачке.
+    """
+    update1 = {"update_id": 1, "callback_query": {"id": "cbq-1", "data": "bad", "message": {"chat": {"id": 111}}}}
+    update2 = {"update_id": 2, "message": {"chat": {"id": 111}, "text": "/status"}}
+    with patch("commands._get_updates", new=AsyncMock(return_value=[update1, update2])), \
+         patch("commands._handle_callback_query", new=AsyncMock(side_effect=RuntimeError("boom"))), \
+         patch("commands._handle_command", new=AsyncMock()) as mock_handle_command:
+        offset = await commands._process_updates_once(None, 0)
+
+    mock_handle_command.assert_called_once_with(None, 111, "/status")
+    assert offset == 3
