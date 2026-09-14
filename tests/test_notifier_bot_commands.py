@@ -27,4 +27,21 @@ async def test_set_bot_commands_sets_extended_commands_scoped_to_admin_chat():
     assert method == "setMyCommands"
     assert payload["scope"] == {"type": "chat", "chat_id": 111}
     command_names = [c["command"] for c in payload["commands"]]
-    assert command_names == ["start", "stop", "status", "trading_setup", "emergency", "reset_paper_balance"]
+    assert command_names == ["start", "stop", "status", "trading_setup", "emergency", "reset_paper_balance", "subscribers"]
+
+
+@pytest.mark.asyncio
+async def test_get_chat_info_calls_get_chat_api():
+    with patch("notifier._api_call", new=AsyncMock(return_value={"id": 111, "username": "ivan"})) as mock_call:
+        result = await notifier.get_chat_info(None, 111)
+
+    mock_call.assert_called_once_with(None, "getChat", {"chat_id": 111})
+    assert result == {"id": 111, "username": "ivan"}
+
+
+@pytest.mark.asyncio
+async def test_get_chat_info_returns_none_when_api_fails():
+    with patch("notifier._api_call", new=AsyncMock(return_value=None)):
+        result = await notifier.get_chat_info(None, 111)
+
+    assert result is None

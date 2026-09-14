@@ -136,6 +136,7 @@ _ADMIN_ONLY_COMMANDS = [
     {"command": "trading_setup", "description": "Настроить автотрейдинг"},
     {"command": "emergency", "description": "Аварийные контролы автотрейдинга"},
     {"command": "reset_paper_balance", "description": "Сбросить paper-trading баланс до $10 000"},
+    {"command": "subscribers", "description": "Список подписчиков (chat_id + профиль)"},
 ]
 
 
@@ -150,6 +151,11 @@ async def set_bot_commands(session: aiohttp.ClientSession, admin_chat_id: int):
         "commands": _PUBLIC_COMMANDS + _ADMIN_ONLY_COMMANDS,
         "scope": {"type": "chat", "chat_id": admin_chat_id},
     })
+
+
+async def get_chat_info(session: aiohttp.ClientSession, chat_id: int) -> dict | None:
+    """Текущий профиль чата (username/first_name/last_name) -- None, если недоступен."""
+    return await _api_call(session, "getChat", {"chat_id": chat_id})
 
 
 async def answer_callback_query(session: aiohttp.ClientSession, callback_query_id: str):

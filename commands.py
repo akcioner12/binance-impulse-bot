@@ -8,8 +8,8 @@ import logging
 import aiohttp
 
 from config import TELEGRAM_TOKEN, IMPULSE_START_THRESHOLD, IMPULSE_STEP, WINDOW_MINUTES, MIN_DAILY_VOLUME_USDT, ADMIN_CHAT_ID
-from storage import add_subscriber, remove_subscriber, is_subscribed, count_subscribers
-from notifier import send_text, send_text_with_keyboard, answer_callback_query
+from storage import add_subscriber, remove_subscriber, is_subscribed, count_subscribers, get_all_subscribers
+from notifier import send_text, send_text_with_keyboard, answer_callback_query, get_chat_info
 from trading_onboarding import (
     start_trading_setup,
     handle_callback as onboarding_handle_callback,
@@ -104,6 +104,11 @@ async def _handle_command(session: aiohttp.ClientSession, chat_id: int, text: st
             [[{"text": "✅ Подтвердить сброс", "callback_data": "reset_balance:confirm"}]],
         )
 
+    elif stripped.startswith("/subscribers"):
+        if chat_id != ADMIN_CHAT_ID:
+            return
+        await _handle_subscribers_command(session, chat_id)
+
 
 async def _handle_emergency_command(session: aiohttp.ClientSession, chat_id: int):
     profile = trading_storage.get_profile(chat_id)
@@ -143,6 +148,35 @@ async def _handle_emergency_callback(session: aiohttp.ClientSession, chat_id: in
             await send_text(session, chat_id, f"🛡 Перенесено в безубыток+: {', '.join(symbols)}.")
         else:
             await send_text(session, chat_id, "Нет позиций для переноса (открытых нет или уже на трейлинге).")
+
+
+def _format_subscriber_line(chat_id: int, info: dict | None) -> str:
+    if info is None:
+        return f"`{chat_id}` — (не удалось получить профиль)"
+    username = info.get("username")
+    name = " ".join(part for part in [info.get("first_name"), info.get("last_name")] if part)
+    if username and name:
+        return f"`{chat_id}` — @{username} ({name})"
+    if username:
+        return f"`{chat_id}` — @{username}"
+    if name:
+        return f"`{chat_id}` — {name}"
+    return f"`{chat_id}` — (нет данных профиля)"
+
+
+async def _handle_subscribers_command(session: aiohttp.ClientSession, chat_id: int):
+    subscriber_ids = get_all_subscribers()
+    if not subscriber_ids:
+        await send_text(session, chat_id, "Подписчиков нет.")
+        return
+
+    lines = []
+    for sub_id in subscriber_ids:
+        info = await get_chat_info(session, sub_id)
+        lines.append(_format_subscriber_line(sub_id, info))
+
+    text = f"*Подписчики ({len(subscriber_ids)}):*\n\n" + "\n".join(lines)
+    await send_text(session, chat_id, text)
 
 
 async def _handle_callback_query(session: aiohttp.ClientSession, callback_query: dict):
