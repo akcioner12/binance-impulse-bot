@@ -150,11 +150,26 @@ async def _handle_emergency_callback(session: aiohttp.ClientSession, chat_id: in
             await send_text(session, chat_id, "Нет позиций для переноса (открытых нет или уже на трейлинге).")
 
 
+def _escape_markdown(text: str) -> str:
+    """
+    Экранирует спецсимволы legacy Telegram Markdown (_ * ` [) -- прод-баг
+    14.09.2026: юзернейм/имя с "_" ломал парсинг ("can't parse entities"),
+    и вся команда /subscribers молча падала на отправке.
+    """
+    for ch in ("_", "*", "`", "["):
+        text = text.replace(ch, f"\\{ch}")
+    return text
+
+
 def _format_subscriber_line(chat_id: int, info: dict | None) -> str:
     if info is None:
         return f"`{chat_id}` — (не удалось получить профиль)"
     username = info.get("username")
+    if username:
+        username = _escape_markdown(username)
     name = " ".join(part for part in [info.get("first_name"), info.get("last_name")] if part)
+    if name:
+        name = _escape_markdown(name)
     if username and name:
         return f"`{chat_id}` — @{username} ({name})"
     if username:

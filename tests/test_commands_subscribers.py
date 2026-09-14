@@ -43,3 +43,18 @@ async def test_subscribers_command_lists_chat_ids_with_resolved_usernames():
     assert "222222" in text and "Пётр" in text
     assert "333333" in text
     assert "3" in text  # общее число подписчиков в заголовке
+
+
+def test_format_subscriber_line_escapes_markdown_special_chars_in_username():
+    """
+    Прод-баг 14.09.2026: юзернейм с "_" ломал парсинг Markdown у Telegram
+    ("can't parse entities: Can't find end of the entity...") -- вся команда
+    молча падала на отправке, без единого сообщения админу.
+    """
+    line = commands._format_subscriber_line(111111, {"id": 111111, "username": "john_doe_123"})
+    assert "john\\_doe\\_123" in line
+
+
+def test_format_subscriber_line_escapes_markdown_special_chars_in_name():
+    line = commands._format_subscriber_line(222222, {"id": 222222, "first_name": "Ivan_*test"})
+    assert "Ivan\\_\\*test" in line
