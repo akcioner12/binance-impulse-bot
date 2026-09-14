@@ -58,6 +58,22 @@ class PriceWindowTracker:
         """Восстановление состояния из БД при старте бота."""
         self._active[symbol] = {"direction": direction, "level": level}
 
+    def seed_history(self, symbol: str, points: list[tuple[int, float]]):
+        """
+        Заполняет буфер историческими точками (ts, price) БЕЗ генерации сигналов --
+        вызывается один раз при старте бота (из исторических свечей биржи), чтобы
+        рестарт не обнулял скользящее 24ч окно: буфер живёт только в памяти
+        процесса, не в БД, и без сидирования окно эффективно "теряет память" на
+        время, пока новые тики не накопят собственные 24ч заново.
+        Если по символу уже есть данные (реальный тик пришёл раньше сидирования) --
+        не трогаем, чтобы не затереть более свежую реальную историю устаревшей.
+        """
+        if not points or symbol in self._buffers:
+            return
+        buf = self._buffers.setdefault(symbol, deque())
+        for ts, price in sorted(points):
+            buf.append((ts, price))
+
     def is_active(self, symbol: str) -> bool:
         return symbol in self._active
 

@@ -38,6 +38,7 @@ from storage import init_db, get_all_subscribers, upsert_alert_state, clear_aler
 from trading_storage import init_trading_db, init_paper_trading_db, expire_all_pending_signals
 import live_trading
 import impulse_analysis
+import market_data
 
 logging.basicConfig(
     level=logging.INFO,
@@ -231,6 +232,35 @@ def is_also_on_bybit(symbol: str) -> bool:
     return symbol in _overlap_symbols
 
 
+async def _seed_price_history(session: aiohttp.ClientSession, binance_symbols: list[str], bybit_only: list[str]):
+    """
+    Подтягивает часовые свечи за 24ч по каждому символу и сидирует буфер
+    tracker (PriceWindowTracker.seed_history()) -- без этого скользящее 24ч
+    окно живёт только в памяти процесса и обнуляется при КАЖДОМ рестарте бота
+    (редеплой), из-за чего детекция импульсов эффективно "теряет память" на
+    время, пока новые тики не накопят собственные 24ч заново (прод-инцидент
+    14.09.2026: 6 редеплоев за 1.5ч -> ни одного сигнала за это время).
+    Ограниченная параллельность (semaphore), чтобы не упереться в rate limit биржи;
+    сбой по одному символу не должен останавливать сидирование остальных.
+    """
+    semaphore = asyncio.Semaphore(10)
+
+    async def seed_one(exchange: str, symbol: str):
+        async with semaphore:
+            try:
+                candles = await market_data.fetch_klines(session, exchange, symbol, "1h", limit=24)
+            except Exception as e:
+                logger.debug(f"Не удалось подтянуть историю для {symbol} [{exchange}]: {e}")
+                return
+            points = [(c["open_time"] // 1000, c["close"]) for c in candles]
+            tracker.seed_history(symbol, points)
+
+    tasks = [seed_one("Binance", s) for s in binance_symbols] + [seed_one("Bybit", s) for s in bybit_only]
+    if tasks:
+        await asyncio.gather(*tasks)
+    logger.info(f"Сидирование истории цен завершено: {len(tasks)} символов")
+
+
 async def collectors_supervisor():
     """
     Раз в SYMBOLS_REFRESH_SEC секунд (по умолчанию 24ч) пересчитывает список торгуемых
@@ -239,11 +269,19 @@ async def collectors_supervisor():
     """
     global _active_symbols, _bybit_only_symbols, _overlap_symbols
 
+    is_first_run = True
     while True:
         binance_symbols, bybit_only, overlap = await fetch_current_symbol_lists()
         _active_symbols = set(binance_symbols)
         _overlap_symbols = overlap
         _bybit_only_symbols = bybit_only
+
+        if is_first_run:
+            # Только на старте процесса -- на плановых 24ч-обновлениях у уже
+            # отслеживаемых символов буфер и так накоплен реальными тиками.
+            async with aiohttp.ClientSession() as seed_session:
+                await _seed_price_history(seed_session, binance_symbols, bybit_only)
+            is_first_run = False
 
         logger.info(
             f"Запускаю WS-подписки: {len(binance_symbols)} пар Binance + "
