@@ -63,6 +63,41 @@ async def test_on_kline_close_does_not_spawn_autotrading_task_on_level_bump():
 
 
 @pytest.mark.asyncio
+async def test_on_kline_close_passes_fetched_indicators_to_broadcast():
+    signal = _FakeSignal(level=main.IMPULSE_START_THRESHOLD)
+    indicators_data = {"rsi": 70.0}
+    with patch.object(main.tracker, "update", return_value=signal), \
+         patch("main.live_trading.handle_price_tick", return_value=None), \
+         patch("main.upsert_alert_state"), \
+         patch("main.get_all_subscribers", return_value=[111]), \
+         patch("main.asyncio.create_task") as mock_create_task, \
+         patch("main.impulse_analysis.build_alert_indicators", new=AsyncMock(return_value=indicators_data)), \
+         patch("main.broadcast_signal", new=AsyncMock()) as mock_broadcast:
+        mock_create_task.side_effect = lambda coro: coro.close()
+        await main.on_kline_close("BTCUSDT", "Binance", 100.0, 1000)
+
+    mock_broadcast.assert_called_once()
+    assert mock_broadcast.call_args[0][3] == indicators_data
+
+
+@pytest.mark.asyncio
+async def test_on_kline_close_broadcasts_with_none_indicators_when_fetch_fails():
+    signal = _FakeSignal(level=main.IMPULSE_START_THRESHOLD)
+    with patch.object(main.tracker, "update", return_value=signal), \
+         patch("main.live_trading.handle_price_tick", return_value=None), \
+         patch("main.upsert_alert_state"), \
+         patch("main.get_all_subscribers", return_value=[111]), \
+         patch("main.asyncio.create_task") as mock_create_task, \
+         patch("main.impulse_analysis.build_alert_indicators", new=AsyncMock(side_effect=RuntimeError("boom"))), \
+         patch("main.broadcast_signal", new=AsyncMock()) as mock_broadcast:
+        mock_create_task.side_effect = lambda coro: coro.close()
+        await main.on_kline_close("BTCUSDT", "Binance", 100.0, 1000)  # не должно упасть
+
+    mock_broadcast.assert_called_once()
+    assert mock_broadcast.call_args[0][3] is None
+
+
+@pytest.mark.asyncio
 async def test_run_autotrading_for_admin_calls_handle_new_impulse():
     with patch("main.live_trading.handle_new_impulse", new=AsyncMock(return_value=None)) as mock_handle:
         await main._run_autotrading_for_admin("BTCUSDT", "Binance", "up", 100.0, 76.0)

@@ -28,7 +28,36 @@ _MIN_DELAY_BETWEEN_SENDS = 0.05  # ~20 сообщений/сек, с запас�
 _WINDOW_HOURS = WINDOW_MINUTES / 60
 
 
-def _format_alert_text(sig: ImpulseSignal) -> str:
+def _format_indicator_lines(indicators: dict | None) -> str:
+    if not indicators:
+        return ""
+
+    lines = []
+    if indicators.get("rsi") is not None:
+        lines.append(f"📊 RSI(15м): {indicators['rsi']:.1f}")
+
+    volume_change_pct = indicators.get("volume_change_pct")
+    volume_vs_avg_ratio = indicators.get("volume_vs_avg_ratio")
+    if volume_change_pct is not None or volume_vs_avg_ratio is not None:
+        parts = []
+        if volume_change_pct is not None:
+            parts.append(f"{volume_change_pct:+.1f}% к пред. свече")
+        if volume_vs_avg_ratio is not None:
+            parts.append(f"×{volume_vs_avg_ratio:.1f} к среднему")
+        lines.append(f"📊 Объём (15м): {', '.join(parts)}")
+
+    if indicators.get("funding_rate") is not None:
+        lines.append(f"📊 Funding: {indicators['funding_rate'] * 100:+.3f}%")
+
+    if indicators.get("oi_change_pct") is not None:
+        lines.append(f"📊 OI: {indicators['oi_change_pct']:+.1f}%")
+
+    if not lines:
+        return ""
+    return "\n".join(lines) + "\n\n"
+
+
+def _format_alert_text(sig: ImpulseSignal, indicators: dict | None = None) -> str:
     arrow = "🚀" if sig.direction == "up" else "🔻"
     word = "РОСТ" if sig.direction == "up" else "ПАДЕНИЕ"
     fire = "🔥" * min(int(sig.level // 30), 3)
@@ -42,6 +71,7 @@ def _format_alert_text(sig: ImpulseSignal) -> str:
         f"Уровень: *{sig.level:.0f}%*\n"
         f"Цена: `{sig.window_start_price:,.6f}` → `{sig.current_price:,.6f}`\n"
         f"\n"
+        f"{_format_indicator_lines(indicators)}"
         f"[Открыть на {sig.exchange}]({link})\n"
         f"_Обновлено: {time.strftime('%H:%M:%S UTC', time.gmtime())}_"
     )
@@ -69,12 +99,12 @@ async def _api_call(session: aiohttp.ClientSession, method: str, payload: dict) 
     return None
 
 
-async def send_or_edit_alert(session: aiohttp.ClientSession, chat_id: int, sig: ImpulseSignal):
+async def send_or_edit_alert(session: aiohttp.ClientSession, chat_id: int, sig: ImpulseSignal, indicators: dict | None = None):
     """
     Отправляет новое сообщение при первом сигнале по монете,
     либо редактирует существующее при повторном (следующий уровень).
     """
-    text = _format_alert_text(sig)
+    text = _format_alert_text(sig, indicators)
     existing_id = get_message_id(sig.symbol, chat_id)
 
     if existing_id:
@@ -100,10 +130,10 @@ async def send_or_edit_alert(session: aiohttp.ClientSession, chat_id: int, sig: 
         set_message_id(sig.symbol, chat_id, result["message_id"])
 
 
-async def broadcast_signal(session: aiohttp.ClientSession, chat_ids: list[int], sig: ImpulseSignal):
+async def broadcast_signal(session: aiohttp.ClientSession, chat_ids: list[int], sig: ImpulseSignal, indicators: dict | None = None):
     """Рассылает сигнал всем подписчикам с защитой от rate limit."""
     for chat_id in chat_ids:
-        await send_or_edit_alert(session, chat_id, sig)
+        await send_or_edit_alert(session, chat_id, sig, indicators)
         await asyncio.sleep(_MIN_DELAY_BETWEEN_SENDS)
 
 

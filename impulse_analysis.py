@@ -78,3 +78,43 @@ async def analyze_impulse(
         "atr_15m": atr_15m,
         "atr_1h": atr_1h,
     }
+
+
+async def build_alert_indicators(session, exchange: str, symbol: str) -> dict | None:
+    """
+    Доп. показатели для публичного текстового алерта об импульсе (RSI/объём/
+    funding/OI) -- легче analyze_impulse() (не тянет 1ч/4ч свечи, они не нужны
+    для этих 5 показателей), т.к. вызывается на КАЖДЫЙ алерт КАЖДОМУ подписчику,
+    а не только для автотрейдинга владельца.
+    """
+    candles_15m = await market_data.fetch_klines(session, exchange, symbol, "15m", limit=30)
+    if len(candles_15m) < 2:
+        return None
+
+    closes = [c["close"] for c in candles_15m]
+    rsi_values = indicators.rsi(closes, period=14)
+    rsi_value = rsi_values[-1]
+
+    prev_volume = candles_15m[-2]["volume"]
+    volume_change_pct = (
+        (candles_15m[-1]["volume"] - prev_volume) / prev_volume * 100 if prev_volume > 0 else None
+    )
+
+    avg_volume = indicators.average_volume(candles_15m, lookback=20)
+    volume_vs_avg_ratio = (candles_15m[-1]["volume"] / avg_volume) if avg_volume > 0 else None
+
+    funding_rate = await market_data.fetch_funding_rate(session, exchange, symbol)
+
+    oi_history = await market_data.fetch_open_interest_history(session, exchange, symbol, period="5m", limit=30)
+    oi_values = [row["open_interest"] for row in oi_history]
+    oi_change_pct = (
+        (oi_values[-1] - oi_values[0]) / oi_values[0] * 100 if len(oi_values) >= 2 and oi_values[0] != 0 else None
+    )
+
+    return {
+        "rsi": rsi_value,
+        "volume_change_pct": volume_change_pct,
+        "volume_vs_avg_ratio": volume_vs_avg_ratio,
+        "funding_rate": funding_rate,
+        "oi_change_pct": oi_change_pct,
+    }

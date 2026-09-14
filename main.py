@@ -37,6 +37,7 @@ from trading_daily_report import trading_daily_report_loop
 from storage import init_db, get_all_subscribers, upsert_alert_state, clear_alert_state, get_alert_state, get_all_active_symbols
 from trading_storage import init_trading_db, init_paper_trading_db, expire_all_pending_signals
 import live_trading
+import impulse_analysis
 
 logging.basicConfig(
     level=logging.INFO,
@@ -116,12 +117,22 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
         return
 
     async with aiohttp.ClientSession() as session:
-        await broadcast_signal(session, subscribers, signal)
+        indicators_data = await _build_alert_indicators_safe(session, signal.exchange, signal.symbol)
+        await broadcast_signal(session, subscribers, signal, indicators_data)
 
     logger.info(
         f"Сигнал отправлен: {signal.symbol} [{signal.exchange}] {signal.direction.upper()} "
         f"{signal.change_pct:+.1f}% (уровень {signal.level:.0f}%) -> {len(subscribers)} подписчикам"
     )
+
+
+async def _build_alert_indicators_safe(session: aiohttp.ClientSession, exchange: str, symbol: str) -> dict | None:
+    """Доп. показатели (RSI/объём/funding/OI) для текстового алерта -- best-effort, не блокирует рассылку при сбое."""
+    try:
+        return await impulse_analysis.build_alert_indicators(session, exchange, symbol)
+    except Exception as e:
+        logger.error(f"Алерт: ошибка получения показателей для {symbol}: {e}")
+        return None
 
 
 async def on_binance_kline(symbol: str, price: float, ts: int):
