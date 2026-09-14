@@ -211,6 +211,19 @@ def adjust_paper_balance(chat_id: int, delta: float) -> float:
         return row["balance"]
 
 
+def reset_paper_trading(chat_id: int, starting_balance: float = 10000.0):
+    """Полный сброс paper-trading для chat_id: обнуляет баланс и стирает позиции/сигналы."""
+    with get_conn() as conn:
+        conn.execute("DELETE FROM positions WHERE chat_id = ?", (chat_id,))
+        conn.execute("DELETE FROM trade_signals WHERE chat_id = ?", (chat_id,))
+        conn.execute(
+            "INSERT INTO paper_balance (chat_id, balance) VALUES (?, ?) "
+            "ON CONFLICT(chat_id) DO UPDATE SET balance = excluded.balance, updated_at = CURRENT_TIMESTAMP",
+            (chat_id, starting_balance),
+        )
+        conn.commit()
+
+
 def create_position(
     chat_id: int, symbol: str, exchange: str, direction: str, mode: str,
     avg_entry_price: float, quantity: float, stop_loss: float,

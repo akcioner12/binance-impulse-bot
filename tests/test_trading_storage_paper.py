@@ -41,6 +41,44 @@ def test_paper_balance_isolated_per_chat_id():
     assert trading_storage.get_paper_balance(222) == 2000.0
 
 
+def test_reset_paper_trading_sets_balance_to_new_value():
+    trading_storage.init_paper_balance(111, starting_balance=500.0)
+    trading_storage.adjust_paper_balance(111, delta=-450.0)  # баланс почти обнулился
+    trading_storage.reset_paper_trading(111, starting_balance=10000.0)
+    assert trading_storage.get_paper_balance(111) == 10000.0
+
+
+def test_reset_paper_trading_works_when_balance_not_previously_initialized():
+    trading_storage.reset_paper_trading(111, starting_balance=10000.0)
+    assert trading_storage.get_paper_balance(111) == 10000.0
+
+
+def test_reset_paper_trading_clears_open_positions():
+    trading_storage.create_position(
+        chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="short",
+        mode="paper", avg_entry_price=100.0, quantity=1.0, stop_loss=105.0,
+    )
+    trading_storage.reset_paper_trading(111, starting_balance=10000.0)
+    assert trading_storage.get_open_positions(111) == []
+
+
+def test_reset_paper_trading_clears_trade_signals():
+    signal_id = trading_storage.create_trade_signal(
+        chat_id=111, symbol="BTCUSDT", exchange="Binance",
+        impulse_direction="up", classification="reversal",
+    )
+    trading_storage.reset_paper_trading(111, starting_balance=10000.0)
+    assert trading_storage.get_trade_signal(signal_id) is None
+
+
+def test_reset_paper_trading_isolated_per_chat_id():
+    trading_storage.init_paper_balance(111, starting_balance=1000.0)
+    trading_storage.init_paper_balance(222, starting_balance=2000.0)
+    trading_storage.reset_paper_trading(111, starting_balance=10000.0)
+    assert trading_storage.get_paper_balance(111) == 10000.0
+    assert trading_storage.get_paper_balance(222) == 2000.0
+
+
 def test_create_position_returns_id_and_defaults_to_open():
     position_id = trading_storage.create_position(
         chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="short",

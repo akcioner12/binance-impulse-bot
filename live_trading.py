@@ -16,6 +16,7 @@ import entry_engine
 import position_manager
 import order_executor
 import market_data
+import indicators
 import trade_signal_ux
 from notifier import send_text
 
@@ -23,6 +24,13 @@ logger = logging.getLogger(__name__)
 
 _pending_setups: dict[str, dict] = {}
 _open_positions: dict[str, dict] = {}
+
+# Шаг, с которым обновляется ATR у долго ждущего сетапа. Триггеры считают
+# дистанцию отката от ATR на момент старта мониторинга -- если цена уходит
+# далеко без отката, эта величина устаревает относительно текущей волатильности
+# (которая обычно растёт вместе с ценой), и триггер рискует сработать на
+# обычном шуме нового масштаба вместо настоящего разворота.
+ATR_REFRESH_STEP_PCT = 50.0
 
 # Очередь уведомлений о действиях бота по открытым позициям (TP, безубыток+,
 # включение трейлинга, закрытие) -- копится синхронно внутри _process_open_
@@ -41,6 +49,16 @@ DEFAULT_ATR_MULTIPLIER = 1.5
 # доверия к тому, что именно ЭТА волна -- последняя.
 WAVE_LOOKBACK_HOURS = 4
 WAVE_SIZE_MULTIPLIERS = {0: 1.0, 1: 0.5}  # wave_count >= 2 -> сетап пропускается
+
+# Ретроспектива 13-14.09.2026 (2833 эпизода за июль-сентябрь): фейд импульса-пампа
+# сам по себе даёт эдж около нуля (avgR +0.13 на всех, но климакс/RSI-дивергенция
+# из classify_impulse() на пампах скорее ВРЕДЯТ, а не помогают). Единственный
+# сигнал, который монотонно и статистически значимо разделяет прибыльные и
+# убыточные пампы -- экстремальность funding rate по модулю (топ-20% -> avgR
+# +0.46, t=4.94): либо перегретые лонги на плече (long squeeze), либо шорты,
+# продолжающие платить несмотря на рост (короткий сквиз без топлива). Дампов
+# это не касается -- там эдж сильный и без дополнительных фильтров.
+PUMP_FUNDING_EXTREME_THRESHOLD = 0.00012
 
 
 async def handle_new_impulse(
@@ -61,6 +79,10 @@ async def handle_new_impulse(
 
     analysis = await impulse_analysis.analyze_impulse(session, symbol, exchange, direction, current_price)
     classification = analysis["classification"]
+
+    if direction == "up" and classification == "reversal":
+        if abs(analysis["funding_rate"]) < PUMP_FUNDING_EXTREME_THRESHOLD:
+            return None
 
     signal_id = trading_storage.create_trade_signal(
         chat_id=chat_id, symbol=symbol, exchange=exchange,
@@ -193,7 +215,7 @@ async def _create_pending_reversal_setup(
         # быть сильно устаревшим, например "цена ~24ч назад"), а цена на момент, когда
         # этот конкретный сетап реально начал мониториться. Ставится лениво на первом
         # тике в _process_pending_setup_tick, аналогично extreme_price у триггеров.
-        "cap_reference_price": None,
+        "cap_reference_price": None, "last_atr_refresh_price": None,
         "trigger_part1": entry_engine.create_part1_trigger(direction, analysis["atr_15m"]),
         "trigger_part2": entry_engine.create_part2_trigger(direction, analysis["atr_15m"]),
         "part_size": total_size / 2,
@@ -393,6 +415,7 @@ def _process_pending_setup_tick(symbol: str, price: float) -> list[str] | None:
 
     if setup["cap_reference_price"] is None:
         setup["cap_reference_price"] = price
+        setup["last_atr_refresh_price"] = price
 
     if not setup["trigger_part1"].fired and setup["trigger_part1"].update(price):
         _handle_part_fill(setup, symbol, price)
@@ -406,12 +429,60 @@ def _process_pending_setup_tick(symbol: str, price: float) -> list[str] | None:
         del _pending_setups[symbol]
         events.append("setup_complete")
     elif not events and not setup["trigger_part1"].fired and not setup["trigger_part2"].fired:
-        if magnet_levels_module.is_beyond_extension_cap(setup["cap_reference_price"], price):
+        cap_pct = (
+            magnet_levels_module.PUMP_EXTENSION_CAP_PCT if setup["impulse_direction"] == "up"
+            else magnet_levels_module.DUMP_EXTENSION_CAP_PCT
+        )
+        if magnet_levels_module.is_beyond_extension_cap(setup["cap_reference_price"], price, cap_pct=cap_pct):
             trading_storage.update_trade_signal_status(setup["signal_id"], "expired")
             del _pending_setups[symbol]
             events.append("setup_expired")
+        elif magnet_levels_module.is_beyond_extension_cap(
+            setup["last_atr_refresh_price"], price, cap_pct=ATR_REFRESH_STEP_PCT
+        ):
+            setup["last_atr_refresh_price"] = price
+            events.append("atr_refresh_needed")
 
     return events or None
+
+
+def reset_all_state(chat_id: int, starting_balance: float = 10000.0) -> None:
+    """Полный сброс paper-trading: чистит БД (баланс/позиции/сигналы) и in-memory состояние."""
+    _pending_setups.clear()
+    _open_positions.clear()
+    trading_storage.reset_paper_trading(chat_id, starting_balance=starting_balance)
+
+
+async def refresh_pending_setup_atr(session, symbol: str) -> None:
+    """
+    Пересчитывает ATR15м/ATR1ч для ожидающего сетапа и обновляет дистанции
+    трейлинг-триггеров -- вызывается фоновой задачей в ответ на событие
+    "atr_refresh_needed" из handle_price_tick (цена ушла далеко от точки
+    старта мониторинга без отката, исходная ATR устарела относительно
+    текущей волатильности). Экстремум триггера (extreme_price) не трогаем --
+    только дистанцию срабатывания.
+    """
+    setup = _pending_setups.get(symbol)
+    if setup is None:
+        return
+
+    exchange = setup["exchange"]
+    candles_15m = await market_data.fetch_klines(session, exchange, symbol, "15m", limit=50)
+    candles_1h = await market_data.fetch_klines(session, exchange, symbol, "1h", limit=24)
+    atr_15m_values = indicators.atr(candles_15m, period=14)
+    atr_1h_values = indicators.atr(candles_1h, period=14)
+    atr_15m = atr_15m_values[-1] if atr_15m_values else None
+    atr_1h = atr_1h_values[-1] if atr_1h_values else None
+    if atr_15m is None or atr_1h is None or atr_15m <= 0 or atr_1h <= 0:
+        return
+
+    setup = _pending_setups.get(symbol)  # сетап мог исчезнуть/слиться, пока шёл запрос
+    if setup is None:
+        return
+
+    setup["trigger_part1"].trigger_distance = atr_15m * entry_engine.PART1_ATR_MULTIPLIER
+    setup["trigger_part2"].trigger_distance = atr_15m * entry_engine.PART2_ATR_MULTIPLIER
+    setup["atr_1h"] = atr_1h
 
 
 def _handle_part_fill(setup: dict, symbol: str, price: float) -> None:

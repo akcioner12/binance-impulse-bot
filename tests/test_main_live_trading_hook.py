@@ -96,6 +96,33 @@ async def test_on_kline_close_spawns_entry_notification_on_part1_filled():
 
 
 @pytest.mark.asyncio
+async def test_on_kline_close_spawns_atr_refresh_task_on_atr_refresh_needed():
+    with patch.object(main.tracker, "update", return_value=None), \
+         patch.object(main.tracker, "is_active", return_value=True), \
+         patch("main.live_trading.handle_price_tick", return_value=["atr_refresh_needed"]), \
+         patch("main.asyncio.create_task") as mock_create_task:
+        mock_create_task.side_effect = lambda coro: coro.close()
+        await main.on_kline_close("BTCUSDT", "Binance", 100.0, 1000)
+
+    mock_create_task.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_refresh_pending_setup_atr_for_admin_calls_refresh():
+    with patch("main.live_trading.refresh_pending_setup_atr", new=AsyncMock()) as mock_refresh:
+        await main._refresh_pending_setup_atr_for_admin("LSKUSDT")
+
+    mock_refresh.assert_called_once()
+    assert mock_refresh.call_args[0][1] == "LSKUSDT"
+
+
+@pytest.mark.asyncio
+async def test_refresh_pending_setup_atr_for_admin_swallows_errors():
+    with patch("main.live_trading.refresh_pending_setup_atr", new=AsyncMock(side_effect=RuntimeError("boom"))):
+        await main._refresh_pending_setup_atr_for_admin("LSKUSDT")  # не должно упасть
+
+
+@pytest.mark.asyncio
 async def test_on_kline_close_does_not_spawn_entry_notification_for_other_events():
     with patch.object(main.tracker, "update", return_value=None), \
          patch.object(main.tracker, "is_active", return_value=True), \

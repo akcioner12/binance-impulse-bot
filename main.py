@@ -84,6 +84,8 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
             logger.info(f"Автотрейдинг [{symbol}]: {tick_events}")
             if "part1_filled" in tick_events or "part2_filled" in tick_events:
                 asyncio.create_task(_notify_entry_for_admin(symbol, exchange))
+            if "atr_refresh_needed" in tick_events:
+                asyncio.create_task(_refresh_pending_setup_atr_for_admin(symbol))
         for note in live_trading.pop_notifications():
             asyncio.create_task(_send_notification(note["chat_id"], note["text"]))
     except Exception as e:
@@ -148,6 +150,19 @@ async def _run_autotrading_for_admin(
             logger.info(f"Автотрейдинг [{symbol}]: сетап найден, классификация={result['classification']}, signal_id={result['signal_id']}")
     except Exception as e:
         logger.error(f"Автотрейдинг: ошибка обработки импульса {symbol} [{exchange}]: {e}")
+
+
+async def _refresh_pending_setup_atr_for_admin(symbol: str):
+    """
+    Пересчитывает ATR для ожидающего сетапа, когда цена ушла далеко без отката
+    (событие "atr_refresh_needed"). Фоновая задача, не блокирует обработку
+    тиков других символов.
+    """
+    try:
+        async with aiohttp.ClientSession() as session:
+            await live_trading.refresh_pending_setup_atr(session, symbol)
+    except Exception as e:
+        logger.error(f"Автотрейдинг: ошибка обновления ATR для {symbol}: {e}")
 
 
 async def _notify_entry_for_admin(symbol: str, exchange: str):

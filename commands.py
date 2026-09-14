@@ -18,6 +18,7 @@ from trading_onboarding import (
 import trade_signal_ux
 import trading_storage
 import emergency_controls
+import live_trading
 
 logger = logging.getLogger(__name__)
 
@@ -94,6 +95,15 @@ async def _handle_command(session: aiohttp.ClientSession, chat_id: int, text: st
             return
         await _handle_emergency_command(session, chat_id)
 
+    elif stripped.startswith("/reset_paper_balance"):
+        if chat_id != ADMIN_CHAT_ID:
+            return
+        await send_text_with_keyboard(
+            session, chat_id,
+            "⚠️ Это сотрёт весь paper-trading (баланс, позиции, историю сигналов) и начнёт заново с $10 000. Подтвердить?",
+            [[{"text": "✅ Подтвердить сброс", "callback_data": "reset_balance:confirm"}]],
+        )
+
 
 async def _handle_emergency_command(session: aiohttp.ClientSession, chat_id: int):
     profile = trading_storage.get_profile(chat_id)
@@ -146,6 +156,9 @@ async def _handle_callback_query(session: aiohttp.ClientSession, callback_query:
     elif data.startswith("emergency:"):
         action = data.split(":", 1)[1]
         await _handle_emergency_callback(session, chat_id, action)
+    elif data == "reset_balance:confirm":
+        live_trading.reset_all_state(chat_id, starting_balance=10000.0)
+        await send_text(session, chat_id, "✅ Paper-trading сброшен. Баланс: $10 000.00.")
     else:
         await onboarding_handle_callback(session, chat_id, data)
 
