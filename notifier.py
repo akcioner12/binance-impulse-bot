@@ -57,11 +57,19 @@ def _format_indicator_lines(indicators: dict | None) -> str:
     return "\n".join(lines) + "\n\n"
 
 
-def _format_alert_text(sig: ImpulseSignal, indicators: dict | None = None) -> str:
+def _format_links_line(sig: ImpulseSignal, also_on_bybit: bool) -> str:
+    link = build_exchange_link(sig.exchange, sig.symbol)
+    line = f"[Открыть на {sig.exchange}]({link})"
+    if also_on_bybit and sig.exchange == "Binance":
+        bybit_link = build_exchange_link("Bybit", sig.symbol)
+        line += f" | [Открыть на Bybit]({bybit_link})"
+    return line
+
+
+def _format_alert_text(sig: ImpulseSignal, indicators: dict | None = None, also_on_bybit: bool = False) -> str:
     arrow = "🚀" if sig.direction == "up" else "🔻"
     word = "РОСТ" if sig.direction == "up" else "ПАДЕНИЕ"
     fire = "🔥" * min(int(sig.level // 30), 3)
-    link = build_exchange_link(sig.exchange, sig.symbol)
 
     return (
         f"{fire} {arrow} *{sig.symbol}* — {word}\n"
@@ -72,7 +80,7 @@ def _format_alert_text(sig: ImpulseSignal, indicators: dict | None = None) -> st
         f"Цена: `{sig.window_start_price:,.6f}` → `{sig.current_price:,.6f}`\n"
         f"\n"
         f"{_format_indicator_lines(indicators)}"
-        f"[Открыть на {sig.exchange}]({link})\n"
+        f"{_format_links_line(sig, also_on_bybit)}\n"
         f"_Обновлено: {time.strftime('%H:%M:%S UTC', time.gmtime())}_"
     )
 
@@ -99,12 +107,15 @@ async def _api_call(session: aiohttp.ClientSession, method: str, payload: dict) 
     return None
 
 
-async def send_or_edit_alert(session: aiohttp.ClientSession, chat_id: int, sig: ImpulseSignal, indicators: dict | None = None):
+async def send_or_edit_alert(
+    session: aiohttp.ClientSession, chat_id: int, sig: ImpulseSignal,
+    indicators: dict | None = None, also_on_bybit: bool = False,
+):
     """
     Отправляет новое сообщение при первом сигнале по монете,
     либо редактирует существующее при повторном (следующий уровень).
     """
-    text = _format_alert_text(sig, indicators)
+    text = _format_alert_text(sig, indicators, also_on_bybit)
     existing_id = get_message_id(sig.symbol, chat_id)
 
     if existing_id:
@@ -130,10 +141,13 @@ async def send_or_edit_alert(session: aiohttp.ClientSession, chat_id: int, sig: 
         set_message_id(sig.symbol, chat_id, result["message_id"])
 
 
-async def broadcast_signal(session: aiohttp.ClientSession, chat_ids: list[int], sig: ImpulseSignal, indicators: dict | None = None):
+async def broadcast_signal(
+    session: aiohttp.ClientSession, chat_ids: list[int], sig: ImpulseSignal,
+    indicators: dict | None = None, also_on_bybit: bool = False,
+):
     """Рассылает сигнал всем подписчикам с защитой от rate limit."""
     for chat_id in chat_ids:
-        await send_or_edit_alert(session, chat_id, sig, indicators)
+        await send_or_edit_alert(session, chat_id, sig, indicators, also_on_bybit)
         await asyncio.sleep(_MIN_DELAY_BETWEEN_SENDS)
 
 

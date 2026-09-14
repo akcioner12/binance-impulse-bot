@@ -55,6 +55,7 @@ for _mod in ("main", "analyzer", "fetcher", "bybit_fetcher", "collector", "bybit
 tracker = PriceWindowTracker()
 _active_symbols: set[str] = set()       # все символы Binance, для symbols_refresher и отчёта
 _bybit_only_symbols: list[str] = []     # уникальные символы Bybit, для symbols_refresher и отчёта
+_overlap_symbols: set[str] = set()      # символы, торгуемые на ОБЕИХ биржах -- для второй ссылки в алерте
 _tick_count = 0                          # диагностика: общее число обработанных тиков с момента старта
 _last_tick_log_time = 0.0
 _seen_symbols: set[str] = set()         # диагностика: подтверждение первого тика по каждому символу
@@ -116,9 +117,11 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
         logger.info(f"Сигнал {signal.symbol} ({signal.exchange}) {signal.direction} {signal.level}% — нет подписчиков")
         return
 
+    also_on_bybit = signal.exchange == "Binance" and is_also_on_bybit(signal.symbol)
+
     async with aiohttp.ClientSession() as session:
         indicators_data = await _build_alert_indicators_safe(session, signal.exchange, signal.symbol)
-        await broadcast_signal(session, subscribers, signal, indicators_data)
+        await broadcast_signal(session, subscribers, signal, indicators_data, also_on_bybit)
 
     logger.info(
         f"Сигнал отправлен: {signal.symbol} [{signal.exchange}] {signal.direction.upper()} "
@@ -201,26 +204,31 @@ async def _send_notification(chat_id: int, text: str):
         logger.error(f"Автотрейдинг: ошибка отправки уведомления: {e}")
 
 
-async def fetch_current_symbol_lists() -> tuple[list[str], list[str]]:
+async def fetch_current_symbol_lists() -> tuple[list[str], list[str], set[str]]:
     """Запрашивает свежие списки пар с обеих бирж и применяет правило дублей."""
     async with aiohttp.ClientSession() as session:
         binance_symbols = await get_tradable_symbols(session)
         bybit_symbols = await get_bybit_tradable_symbols(session)
 
     binance_set = set(binance_symbols)
+    overlap = set(bybit_symbols) & binance_set
     bybit_only = sorted(set(bybit_symbols) - binance_set)
-    overlap_count = len(set(bybit_symbols) & binance_set)
 
     logger.info(
         f"Binance: {len(binance_symbols)} пар. Bybit: {len(bybit_symbols)} пар, "
-        f"из них {overlap_count} пересекаются с Binance (пропускаются), "
+        f"из них {len(overlap)} пересекаются с Binance (пропускаются), "
         f"{len(bybit_only)} уникальны для Bybit (мониторятся)."
     )
     # Полный список пар на DEBUG-уровне — чтобы при расследовании пропущенного сигнала
     # можно было найти конкретный тикер в логах и подтвердить/исключить его отсутствие в подписке.
     logger.debug(f"Полный список Binance: {','.join(sorted(binance_symbols))}")
     logger.debug(f"Полный список Bybit-only: {','.join(bybit_only)}")
-    return sorted(binance_symbols), bybit_only
+    return sorted(binance_symbols), bybit_only, overlap
+
+
+def is_also_on_bybit(symbol: str) -> bool:
+    """True, если символ (источник -- Binance) также торгуется на Bybit -- вторая ссылка в алерте."""
+    return symbol in _overlap_symbols
 
 
 async def collectors_supervisor():
@@ -229,11 +237,12 @@ async def collectors_supervisor():
     пар на обеих биржах и ПЕРЕЗАПУСКАЕТ WebSocket-подписки с этим обновлённым списком —
     новые/выросшие по объёму пары начинают мониториться, исчезнувшие/упавшие — отключаются.
     """
-    global _active_symbols, _bybit_only_symbols
+    global _active_symbols, _bybit_only_symbols, _overlap_symbols
 
     while True:
-        binance_symbols, bybit_only = await fetch_current_symbol_lists()
+        binance_symbols, bybit_only, overlap = await fetch_current_symbol_lists()
         _active_symbols = set(binance_symbols)
+        _overlap_symbols = overlap
         _bybit_only_symbols = bybit_only
 
         logger.info(
