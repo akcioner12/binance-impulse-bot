@@ -271,6 +271,36 @@ async def _seed_price_history(session: aiohttp.ClientSession, binance_symbols: l
     logger.info(f"Сидирование истории цен завершено: {len(tasks)} символов")
 
 
+async def _seed_dump_history(session: aiohttp.ClientSession, binance_symbols: list[str], bybit_only: list[str]):
+    """
+    Подтягивает 10 дневных свечей по каждому символу и сидирует dump_tracker
+    (DailyHighTracker.seed_history()) -- без этого 10-дневное окно детекции
+    дампов для автотрейдинга после каждого рестарта Railway "теряет память"
+    так же, как раньше терял её 24ч-буфер PriceWindowTracker (см.
+    _seed_price_history выше). Последняя из 10 свечей -- текущие (ещё не
+    завершённые) сутки, остальные до 9 -- завершённые дни.
+    """
+    semaphore = asyncio.Semaphore(10)
+
+    async def seed_one(exchange: str, symbol: str):
+        async with semaphore:
+            try:
+                candles = await market_data.fetch_klines(session, exchange, symbol, "1d", limit=10)
+            except Exception as e:
+                logger.debug(f"Не удалось подтянуть дневную историю для {symbol} [{exchange}]: {e}")
+                return
+            if not candles:
+                return
+            *completed, today = candles
+            daily_highs = [c["high"] for c in completed]
+            dump_tracker.seed_history(symbol, daily_highs, today["high"], today["open_time"] // 1000)
+
+    tasks = [seed_one("Binance", s) for s in binance_symbols] + [seed_one("Bybit", s) for s in bybit_only]
+    if tasks:
+        await asyncio.gather(*tasks)
+    logger.info(f"Сидирование дневной истории дампов завершено: {len(tasks)} символов")
+
+
 async def collectors_supervisor():
     """
     Раз в SYMBOLS_REFRESH_SEC секунд (по умолчанию 24ч) пересчитывает список торгуемых
@@ -291,6 +321,7 @@ async def collectors_supervisor():
             # отслеживаемых символов буфер и так накоплен реальными тиками.
             async with aiohttp.ClientSession() as seed_session:
                 await _seed_price_history(seed_session, binance_symbols, bybit_only)
+                await _seed_dump_history(seed_session, binance_symbols, bybit_only)
             is_first_run = False
 
         logger.info(
