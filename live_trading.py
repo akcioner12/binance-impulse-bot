@@ -85,6 +85,16 @@ async def handle_new_impulse(
         if abs(analysis["funding_rate"]) < PUMP_FUNDING_EXTREME_THRESHOLD:
             return None
 
+    magnet_levels_list = []
+    if classification == "reversal":
+        # Считаем ЗАРАНЕЕ (не в execute_setup после подтверждения), чтобы
+        # сообщение "Найден сетап" показывало реальные уровни, а не всегда
+        # "—" (прод-баг 14.09.2026: magnet_levels считался только постфактум).
+        daily_candles = await market_data.fetch_klines(session, exchange, symbol, "1d", limit=90)
+        weekly_candles = await market_data.fetch_klines(session, exchange, symbol, "1w", limit=52)
+        magnet_levels_list = magnet_levels_module.find_magnet_levels(daily_candles, weekly_candles, current_price, direction)
+        analysis["magnet_levels"] = magnet_levels_list
+
     signal_id = trading_storage.create_trade_signal(
         chat_id=chat_id, symbol=symbol, exchange=exchange,
         impulse_direction=direction, classification=classification,
@@ -93,7 +103,7 @@ async def handle_new_impulse(
     await trade_signal_ux.request_confirmation(
         session, chat_id, symbol, exchange, direction, classification,
         current_price, window_start_price, profile, analysis, signal_id,
-        magnet_levels=[], execute_fn=execute_setup,
+        magnet_levels=magnet_levels_list, execute_fn=execute_setup,
     )
     return {"classification": classification, "signal_id": signal_id, "awaiting_confirmation": True}
 
@@ -199,9 +209,14 @@ async def _create_pending_reversal_setup(
     session, chat_id: int, symbol: str, exchange: str, direction: str, current_price: float,
     window_start_price: float, profile: dict, analysis: dict, signal_id: int, size_multiplier: float = 1.0,
 ) -> dict:
-    daily_candles = await market_data.fetch_klines(session, exchange, symbol, "1d", limit=90)
-    weekly_candles = await market_data.fetch_klines(session, exchange, symbol, "1w", limit=52)
-    levels = magnet_levels_module.find_magnet_levels(daily_candles, weekly_candles, current_price, direction)
+    # magnet_levels обычно уже посчитан заранее в handle_new_impulse (до отправки
+    # сообщения с подтверждением) -- переиспользуем, чтобы не дублировать сетевые
+    # запросы; считаем заново только если сюда попали в обход этого пути.
+    levels = analysis.get("magnet_levels")
+    if levels is None:
+        daily_candles = await market_data.fetch_klines(session, exchange, symbol, "1d", limit=90)
+        weekly_candles = await market_data.fetch_klines(session, exchange, symbol, "1w", limit=52)
+        levels = magnet_levels_module.find_magnet_levels(daily_candles, weekly_candles, current_price, direction)
 
     trade_direction = position_manager.determine_trade_direction(direction, "reversal")
     estimated_stop_loss = position_manager.calculate_stop_loss(

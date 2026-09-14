@@ -105,6 +105,7 @@ async def test_handle_new_impulse_proceeds_pump_reversal_with_extreme_funding():
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
          patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
              return_value=_analysis("reversal", funding_rate=0.0002))), \
+         patch("live_trading.market_data.fetch_klines", new=AsyncMock(return_value=[])), \
          patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
          patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
         result = await live_trading.handle_new_impulse(
@@ -114,6 +115,49 @@ async def test_handle_new_impulse_proceeds_pump_reversal_with_extreme_funding():
 
     assert result == {"classification": "reversal", "signal_id": 99, "awaiting_confirmation": True}
     mock_request.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_new_impulse_computes_real_magnet_levels_for_reversal():
+    """
+    Прод-баг 14.09.2026: сообщение подтверждения всегда показывало "Магнит-уровни: —"
+    для ЛЮБОЙ монеты -- magnet_levels считался ПОСЛЕ отправки сообщения (в
+    _create_pending_reversal_setup, уже после подтверждения), а не до. Теперь
+    считается заранее и передаётся в само сообщение.
+    """
+    with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
+         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
+             return_value=_analysis("reversal", funding_rate=0.0002))), \
+         patch("live_trading.market_data.fetch_klines", new=AsyncMock(return_value=[])), \
+         patch("live_trading.magnet_levels_module.find_magnet_levels", return_value=[150.0, 200.0]) as mock_find, \
+         patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
+         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+        await live_trading.handle_new_impulse(
+            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
+            direction="up", current_price=100.0, window_start_price=70.0,
+        )
+
+    mock_find.assert_called_once()
+    assert mock_request.call_args.kwargs["magnet_levels"] == [150.0, 200.0]
+
+
+@pytest.mark.asyncio
+async def test_handle_new_impulse_skips_magnet_levels_for_continuation():
+    with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
+         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
+             return_value=_analysis("continuation", funding_rate=0.00001))), \
+         patch("live_trading.magnet_levels_module.find_magnet_levels") as mock_find, \
+         patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
+         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+        await live_trading.handle_new_impulse(
+            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
+            direction="up", current_price=100.0, window_start_price=70.0,
+        )
+
+    mock_find.assert_not_called()
+    assert mock_request.call_args.kwargs["magnet_levels"] == []
 
 
 @pytest.mark.asyncio
@@ -139,6 +183,7 @@ async def test_handle_new_impulse_funding_filter_does_not_apply_to_dumps():
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
          patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
              return_value=_analysis("reversal", funding_rate=0.00001))), \
+         patch("live_trading.market_data.fetch_klines", new=AsyncMock(return_value=[])), \
          patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
          patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
         result = await live_trading.handle_new_impulse(
