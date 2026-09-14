@@ -408,6 +408,10 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
         trading_storage.adjust_paper_balance(chat_id, stop_event["pnl_delta"])
         trading_storage.close_position(state.position_id, realized_pnl=stop_event["pnl_delta"])
         _queue_notification(chat_id, _format_close_report(symbol, stop_event))
+        logger.info(
+            f"Автотрейдинг [{symbol}]: {stop_event['event']}, "
+            f"цена={stop_event['exit_price']:.6g}, pnl={stop_event['pnl_delta']:+.2f}"
+        )
         del _open_positions[symbol]
         return [stop_event["event"]]
 
@@ -416,11 +420,17 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
         if event["event"].startswith("tp"):
             trading_storage.adjust_paper_balance(chat_id, event["pnl_delta"])
             _queue_notification(chat_id, _format_tp_report(symbol, event, state))
+            logger.info(
+                f"Автотрейдинг [{symbol}]: {event['event']}, "
+                f"цена={event['exit_price']:.6g}, pnl={event['pnl_delta']:+.2f}"
+            )
         elif event["event"] == "moved_to_breakeven":
             trading_storage.update_position_stop_loss(state.position_id, event["new_stop_loss"])
             _queue_notification(chat_id, _format_breakeven_report(symbol, event))
+            logger.info(f"Автотрейдинг [{symbol}]: moved_to_breakeven, new_sl={event['new_stop_loss']:.6g}")
         elif event["event"] == "chandelier_activated":
             _queue_notification(chat_id, _format_chandelier_activated_report(symbol, state))
+            logger.info(f"Автотрейдинг [{symbol}]: chandelier_activated")
         events.append(event["event"])
 
     if tp_events or state.chandelier is not None:

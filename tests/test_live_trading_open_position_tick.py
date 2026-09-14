@@ -1,3 +1,5 @@
+import logging
+
 import pytest
 from unittest.mock import patch
 
@@ -106,6 +108,33 @@ def test_tick_tp3_hit_activates_chandelier_and_notifies():
     texts = [n["text"] for n in notes]
     assert any("TP3" in t for t in texts)
     assert any("трейлинг" in t.lower() for t in texts)
+
+
+def test_tick_stop_loss_hit_logs_event(caplog):
+    """
+    Юзер попросил (15.09.2026) проверить, нормальна ли серия подряд идущих
+    стопов в live paper-trading -- выяснилось, что закрытия/тейки нигде не
+    логируются (только уведомление в Telegram), поэтому я не мог сам
+    посмотреть историю через Railway logs. Добавляем logger.info на каждое
+    событие, чтобы впредь можно было сверять живую историю сделок самому.
+    """
+    _make_open_position()
+    with caplog.at_level(logging.INFO, logger="live_trading"), \
+         patch("live_trading.trading_storage.adjust_paper_balance"), \
+         patch("live_trading.trading_storage.close_position"):
+        live_trading.handle_price_tick("BTCUSDT", price=96.0)
+
+    assert any("BTCUSDT" in r.message and "closed_stop_loss" in r.message and "-16.00" in r.message for r in caplog.records)
+
+
+def test_tick_tp_hit_logs_event(caplog):
+    _make_open_position()
+    with caplog.at_level(logging.INFO, logger="live_trading"), \
+         patch("live_trading.trading_storage.adjust_paper_balance"), \
+         patch("live_trading.trading_storage.update_position_progress"):
+        live_trading.handle_price_tick("BTCUSDT", price=110.0)
+
+    assert any("BTCUSDT" in r.message and "tp1_hit" in r.message for r in caplog.records)
 
 
 def test_tick_closed_chandelier_notifies_full_close():
