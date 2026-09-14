@@ -30,7 +30,7 @@ from bybit_fetcher import get_bybit_tradable_symbols
 from analyzer import PriceWindowTracker
 from collector import stream_all_symbols
 from bybit_collector import stream_bybit_symbols
-from notifier import broadcast_signal, send_text
+from notifier import broadcast_signal, send_text, set_bot_commands
 from commands import run_command_listener
 from daily_report import daily_report_loop
 from trading_daily_report import trading_daily_report_loop
@@ -288,6 +288,7 @@ async def main():
     expire_all_pending_signals()
 
     async with aiohttp.ClientSession() as cmd_session:
+        await set_bot_commands(cmd_session, ADMIN_CHAT_ID)
         await asyncio.gather(
             collectors_supervisor(),
             run_command_listener(cmd_session),

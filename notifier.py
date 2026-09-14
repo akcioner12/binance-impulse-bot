@@ -127,6 +127,31 @@ async def send_text_with_keyboard(
     })
 
 
+_PUBLIC_COMMANDS = [
+    {"command": "start", "description": "Подписаться на сигналы"},
+    {"command": "stop", "description": "Отписаться от сигналов"},
+    {"command": "status", "description": "Текущие настройки и число подписчиков"},
+]
+_ADMIN_ONLY_COMMANDS = [
+    {"command": "trading_setup", "description": "Настроить автотрейдинг"},
+    {"command": "emergency", "description": "Аварийные контролы автотрейдинга"},
+    {"command": "reset_paper_balance", "description": "Сбросить paper-trading баланс до $10 000"},
+]
+
+
+async def set_bot_commands(session: aiohttp.ClientSession, admin_chat_id: int):
+    """
+    Регистрирует меню команд Telegram ("/" в чате) -- по умолчанию только
+    публичные команды, админ видит дополнительно свои (scope на его chat_id).
+    Вызывается один раз при старте бота, безопасно вызывать повторно.
+    """
+    await _api_call(session, "setMyCommands", {"commands": _PUBLIC_COMMANDS})
+    await _api_call(session, "setMyCommands", {
+        "commands": _PUBLIC_COMMANDS + _ADMIN_ONLY_COMMANDS,
+        "scope": {"type": "chat", "chat_id": admin_chat_id},
+    })
+
+
 async def answer_callback_query(session: aiohttp.ClientSession, callback_query_id: str):
     """Подтверждает получение нажатия inline-кнопки (убирает 'часики' в Telegram)."""
     await _api_call(session, "answerCallbackQuery", {
