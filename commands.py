@@ -109,6 +109,11 @@ async def _handle_command(session: aiohttp.ClientSession, chat_id: int, text: st
             return
         await _handle_subscribers_command(session, chat_id)
 
+    elif stripped.startswith("/set_max_trades"):
+        if chat_id != ADMIN_CHAT_ID:
+            return
+        await _handle_set_max_trades_command(session, chat_id, stripped)
+
 
 async def _handle_emergency_command(session: aiohttp.ClientSession, chat_id: int):
     profile = trading_storage.get_profile(chat_id)
@@ -192,6 +197,24 @@ async def _handle_subscribers_command(session: aiohttp.ClientSession, chat_id: i
 
     text = f"*Подписчики ({len(subscriber_ids)}):*\n\n" + "\n".join(lines)
     await send_text(session, chat_id, text)
+
+
+async def _handle_set_max_trades_command(session: aiohttp.ClientSession, chat_id: int, stripped: str):
+    parts = stripped.split()
+    if len(parts) != 2:
+        await send_text(session, chat_id, "Использование: `/set_max_trades N` (например, `/set_max_trades 10`)")
+        return
+    try:
+        value = int(parts[1])
+    except ValueError:
+        await send_text(session, chat_id, "Нужно целое число, например `/set_max_trades 10`.")
+        return
+    if value <= 0:
+        await send_text(session, chat_id, "Число должно быть больше нуля.")
+        return
+
+    trading_storage.update_max_concurrent_trades(chat_id, value)
+    await send_text(session, chat_id, f"✅ Максимум одновременных сделок: {value}.")
 
 
 async def _handle_callback_query(session: aiohttp.ClientSession, callback_query: dict):

@@ -41,6 +41,20 @@ def test_save_and_get_profile_roundtrip():
     assert profile["is_active"] == 1
 
 
+def test_update_max_concurrent_trades_changes_only_that_field():
+    trading_storage.save_profile(
+        chat_id=444, risk_percent=1.0, daily_loss_limit_percent=5.0,
+        leverage=3.0, sl_method="atr", sl_fixed_percent=None,
+        breakeven_after_tp=2, tp_split_preset="equal", max_concurrent_trades=3,
+    )
+    trading_storage.update_max_concurrent_trades(444, 10)
+
+    profile = trading_storage.get_profile(444)
+    assert profile["max_concurrent_trades"] == 10
+    assert profile["risk_percent"] == 1.0  # остальные поля не тронуты
+    assert profile["leverage"] == 3.0
+
+
 def test_has_profile_true_after_save():
     trading_storage.save_profile(
         chat_id=222, risk_percent=1.0, daily_loss_limit_percent=5.0,

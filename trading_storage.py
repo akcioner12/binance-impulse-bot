@@ -84,6 +84,15 @@ def save_profile(
         conn.commit()
 
 
+def update_max_concurrent_trades(chat_id: int, value: int):
+    with get_conn() as conn:
+        conn.execute(
+            "UPDATE user_profiles SET max_concurrent_trades = ?, updated_at = CURRENT_TIMESTAMP WHERE chat_id = ?",
+            (value, chat_id),
+        )
+        conn.commit()
+
+
 def get_profile(chat_id: int) -> dict | None:
     with get_conn() as conn:
         row = conn.execute(
