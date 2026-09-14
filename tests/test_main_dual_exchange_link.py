@@ -39,6 +39,7 @@ async def test_on_kline_close_passes_also_on_bybit_true_for_overlap_symbol():
     signal = _FakeSignal(symbol="ETHUSDT", exchange="Binance", level=main.IMPULSE_START_THRESHOLD)
     main._overlap_symbols = {"ETHUSDT"}
     with patch.object(main.tracker, "update", return_value=signal), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch("main.live_trading.handle_price_tick", return_value=None), \
          patch("main.upsert_alert_state"), \
          patch("main.get_all_subscribers", return_value=[111]), \
@@ -56,6 +57,7 @@ async def test_on_kline_close_passes_also_on_bybit_false_for_non_overlap_symbol(
     signal = _FakeSignal(symbol="BTCUSDT", exchange="Binance", level=main.IMPULSE_START_THRESHOLD)
     main._overlap_symbols = set()
     with patch.object(main.tracker, "update", return_value=signal), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch("main.live_trading.handle_price_tick", return_value=None), \
          patch("main.upsert_alert_state"), \
          patch("main.get_all_subscribers", return_value=[111]), \
@@ -73,6 +75,7 @@ async def test_on_kline_close_also_on_bybit_false_for_bybit_sourced_signal():
     signal = _FakeSignal(symbol="XUSDT", exchange="Bybit", level=main.IMPULSE_START_THRESHOLD)
     main._overlap_symbols = {"XUSDT"}  # гипотетически, не должно случаться, но проверяем защиту
     with patch.object(main.tracker, "update", return_value=signal), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch("main.live_trading.handle_price_tick", return_value=None), \
          patch("main.upsert_alert_state"), \
          patch("main.get_all_subscribers", return_value=[111]), \

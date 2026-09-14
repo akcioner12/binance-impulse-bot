@@ -7,6 +7,7 @@ import main
 @pytest.mark.asyncio
 async def test_on_kline_close_calls_handle_price_tick_every_time_even_without_signal():
     with patch.object(main.tracker, "update", return_value=None), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch.object(main.tracker, "is_active", return_value=True), \
          patch("main.live_trading.handle_price_tick", return_value=None) as mock_tick:
         await main.on_kline_close("BTCUSDT", "Binance", 100.0, 1000)
@@ -17,6 +18,7 @@ async def test_on_kline_close_calls_handle_price_tick_every_time_even_without_si
 @pytest.mark.asyncio
 async def test_on_kline_close_swallows_errors_from_handle_price_tick():
     with patch.object(main.tracker, "update", return_value=None), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch.object(main.tracker, "is_active", return_value=True), \
          patch("main.live_trading.handle_price_tick", side_effect=RuntimeError("boom")):
         await main.on_kline_close("BTCUSDT", "Binance", 100.0, 1000)  # не должно упасть
@@ -39,6 +41,7 @@ class _FakeSignal:
 async def test_on_kline_close_spawns_autotrading_task_on_first_level_signal():
     signal = _FakeSignal(level=main.IMPULSE_START_THRESHOLD)
     with patch.object(main.tracker, "update", return_value=signal), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch("main.live_trading.handle_price_tick", return_value=None), \
          patch("main.upsert_alert_state"), \
          patch("main.get_all_subscribers", return_value=[]), \
@@ -53,6 +56,7 @@ async def test_on_kline_close_spawns_autotrading_task_on_first_level_signal():
 async def test_on_kline_close_does_not_spawn_autotrading_task_on_level_bump():
     signal = _FakeSignal(level=main.IMPULSE_START_THRESHOLD + 10.0, is_new_peak=True)
     with patch.object(main.tracker, "update", return_value=signal), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch("main.live_trading.handle_price_tick", return_value=None), \
          patch("main.upsert_alert_state"), \
          patch("main.get_all_subscribers", return_value=[]), \
@@ -67,6 +71,7 @@ async def test_on_kline_close_passes_fetched_indicators_to_broadcast():
     signal = _FakeSignal(level=main.IMPULSE_START_THRESHOLD)
     indicators_data = {"rsi": 70.0}
     with patch.object(main.tracker, "update", return_value=signal), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch("main.live_trading.handle_price_tick", return_value=None), \
          patch("main.upsert_alert_state"), \
          patch("main.get_all_subscribers", return_value=[111]), \
@@ -84,6 +89,7 @@ async def test_on_kline_close_passes_fetched_indicators_to_broadcast():
 async def test_on_kline_close_broadcasts_with_none_indicators_when_fetch_fails():
     signal = _FakeSignal(level=main.IMPULSE_START_THRESHOLD)
     with patch.object(main.tracker, "update", return_value=signal), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch("main.live_trading.handle_price_tick", return_value=None), \
          patch("main.upsert_alert_state"), \
          patch("main.get_all_subscribers", return_value=[111]), \
@@ -121,6 +127,7 @@ async def test_run_autotrading_for_admin_swallows_errors():
 @pytest.mark.asyncio
 async def test_on_kline_close_spawns_entry_notification_on_part1_filled():
     with patch.object(main.tracker, "update", return_value=None), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch.object(main.tracker, "is_active", return_value=True), \
          patch("main.live_trading.handle_price_tick", return_value=["part1_filled"]), \
          patch("main.asyncio.create_task") as mock_create_task:
@@ -133,6 +140,7 @@ async def test_on_kline_close_spawns_entry_notification_on_part1_filled():
 @pytest.mark.asyncio
 async def test_on_kline_close_spawns_atr_refresh_task_on_atr_refresh_needed():
     with patch.object(main.tracker, "update", return_value=None), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch.object(main.tracker, "is_active", return_value=True), \
          patch("main.live_trading.handle_price_tick", return_value=["atr_refresh_needed"]), \
          patch("main.asyncio.create_task") as mock_create_task:
@@ -160,6 +168,7 @@ async def test_refresh_pending_setup_atr_for_admin_swallows_errors():
 @pytest.mark.asyncio
 async def test_on_kline_close_does_not_spawn_entry_notification_for_other_events():
     with patch.object(main.tracker, "update", return_value=None), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch.object(main.tracker, "is_active", return_value=True), \
          patch("main.live_trading.handle_price_tick", return_value=["closed_stop_loss"]), \
          patch("main.asyncio.create_task") as mock_create_task:
@@ -230,6 +239,7 @@ async def test_notify_entry_for_admin_swallows_errors():
 @pytest.mark.asyncio
 async def test_on_kline_close_dispatches_queued_lifecycle_notifications():
     with patch.object(main.tracker, "update", return_value=None), \
+         patch.object(main.dump_tracker, "update", return_value=None), \
          patch.object(main.tracker, "is_active", return_value=True), \
          patch("main.live_trading.handle_price_tick", return_value=["tp1_hit"]), \
          patch("main.live_trading.pop_notifications", return_value=[{"chat_id": 111, "text": "TP1 исполнен"}]), \

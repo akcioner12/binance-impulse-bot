@@ -27,7 +27,7 @@ import aiohttp
 from config import SYMBOLS_REFRESH_SEC, ADMIN_CHAT_ID, IMPULSE_START_THRESHOLD
 from fetcher import get_tradable_symbols
 from bybit_fetcher import get_bybit_tradable_symbols
-from analyzer import PriceWindowTracker
+from analyzer import PriceWindowTracker, DailyHighTracker
 from collector import stream_all_symbols
 from bybit_collector import stream_bybit_symbols
 from notifier import broadcast_signal, send_text, set_bot_commands
@@ -54,6 +54,7 @@ for _mod in ("main", "analyzer", "fetcher", "bybit_fetcher", "collector", "bybit
     logging.getLogger(_mod).setLevel(logging.DEBUG)
 
 tracker = PriceWindowTracker()
+dump_tracker = DailyHighTracker()
 _active_symbols: set[str] = set()       # все символы Binance, для symbols_refresher и отчёта
 _bybit_only_symbols: list[str] = []     # уникальные символы Bybit, для symbols_refresher и отчёта
 _overlap_symbols: set[str] = set()      # символы, торгуемые на ОБЕИХ биржах -- для второй ссылки в алерте
@@ -94,6 +95,13 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
     except Exception as e:
         logger.error(f"Автотрейдинг: ошибка обработки тика {symbol}: {e}")
 
+    dump_signal = dump_tracker.update(symbol, exchange, price, ts)
+    if dump_signal is not None and dump_signal.level == IMPULSE_START_THRESHOLD:
+        asyncio.create_task(_run_autotrading_for_admin(
+            dump_signal.symbol, dump_signal.exchange, dump_signal.direction,
+            dump_signal.current_price, dump_signal.window_start_price,
+        ))
+
     if signal is None:
         if not tracker.is_active(symbol) and get_alert_state(symbol):
             clear_alert_state(symbol)
@@ -107,7 +115,7 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
         updated_at=ts,
     )
 
-    if signal.level == IMPULSE_START_THRESHOLD:
+    if signal.level == IMPULSE_START_THRESHOLD and signal.direction == "up":
         asyncio.create_task(_run_autotrading_for_admin(
             signal.symbol, signal.exchange, signal.direction,
             signal.current_price, signal.window_start_price,
