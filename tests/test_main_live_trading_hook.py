@@ -185,6 +185,34 @@ async def test_notify_entry_for_admin_sends_formatted_report():
 
 
 @pytest.mark.asyncio
+async def test_notify_entry_for_admin_passes_also_on_bybit_true_for_overlap_symbol():
+    snapshot = {"chat_id": 111, "direction": "short", "avg_entry_price": 1.8, "quantity": 10.0,
+                "stop_loss": 1.9, "take_profits": [{"level": 1.7, "size_pct": 15}],
+                "tp4_size_pct": 85, "risk_amount": 1.0}
+    main._overlap_symbols = {"LSKUSDT"}
+    with patch("main.live_trading.get_position_snapshot", return_value=snapshot), \
+         patch("main.live_trading.format_entry_report", return_value="text") as mock_format, \
+         patch("main.send_text", new=AsyncMock()):
+        await main._notify_entry_for_admin("LSKUSDT", "Binance")
+
+    mock_format.assert_called_once_with("LSKUSDT", "Binance", snapshot, True)
+
+
+@pytest.mark.asyncio
+async def test_notify_entry_for_admin_passes_also_on_bybit_false_for_non_overlap_symbol():
+    snapshot = {"chat_id": 111, "direction": "short", "avg_entry_price": 1.8, "quantity": 10.0,
+                "stop_loss": 1.9, "take_profits": [{"level": 1.7, "size_pct": 15}],
+                "tp4_size_pct": 85, "risk_amount": 1.0}
+    main._overlap_symbols = set()
+    with patch("main.live_trading.get_position_snapshot", return_value=snapshot), \
+         patch("main.live_trading.format_entry_report", return_value="text") as mock_format, \
+         patch("main.send_text", new=AsyncMock()):
+        await main._notify_entry_for_admin("LSKUSDT", "Binance")
+
+    mock_format.assert_called_once_with("LSKUSDT", "Binance", snapshot, False)
+
+
+@pytest.mark.asyncio
 async def test_notify_entry_for_admin_noop_when_no_position():
     with patch("main.live_trading.get_position_snapshot", return_value=None), \
          patch("main.send_text", new=AsyncMock()) as mock_send:

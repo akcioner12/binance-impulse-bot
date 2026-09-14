@@ -190,8 +190,10 @@ async def _notify_entry_for_admin(symbol: str, exchange: str):
         snapshot = live_trading.get_position_snapshot(symbol)
         if snapshot is None:
             return
+        also_on_bybit = exchange == "Binance" and is_also_on_bybit(symbol)
+        report = live_trading.format_entry_report(symbol, exchange, snapshot, also_on_bybit)
         async with aiohttp.ClientSession() as session:
-            await send_text(session, snapshot["chat_id"], live_trading.format_entry_report(symbol, exchange, snapshot))
+            await send_text(session, snapshot["chat_id"], report)
     except Exception as e:
         logger.error(f"Автотрейдинг: ошибка отправки отчёта о входе {symbol}: {e}")
 

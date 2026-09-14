@@ -19,6 +19,7 @@ import market_data
 import indicators
 import trade_signal_ux
 from notifier import send_text
+from analyzer import build_exchange_link
 
 logger = logging.getLogger(__name__)
 
@@ -134,13 +135,16 @@ async def execute_setup(
     )
 
 
-def format_entry_report(symbol: str, exchange: str, snapshot: dict) -> str:
+def format_entry_report(symbol: str, exchange: str, snapshot: dict, also_on_bybit: bool = False) -> str:
     """Отчёт пользователю о факте входа в сделку -- цена, объём, SL, сетка TP."""
     direction_word = "🟢 LONG" if snapshot["direction"] == "long" else "🔴 SHORT"
     tp_lines = "\n".join(
         f"TP{idx}: `{tp['level']:.6g}` ({tp['size_pct']}%)"
         for idx, tp in enumerate(snapshot["take_profits"], start=1)
     )
+    link_line = f"[Открыть на {exchange}]({build_exchange_link(exchange, symbol)})"
+    if also_on_bybit and exchange == "Binance":
+        link_line += f" | [Открыть на Bybit]({build_exchange_link('Bybit', symbol)})"
     return (
         f"✅ *Вход в сделку: {symbol}* [{exchange}]\n\n"
         f"Направление: {direction_word}\n"
@@ -149,7 +153,8 @@ def format_entry_report(symbol: str, exchange: str, snapshot: dict) -> str:
         f"SL: `{snapshot['stop_loss']:.6g}`\n"
         f"{tp_lines}\n"
         f"TP4: трейлинг (Chandelier), {snapshot['tp4_size_pct']}% объёма\n\n"
-        f"Риск на сделку: `{snapshot['risk_amount']:.2f}`"
+        f"Риск на сделку: `{snapshot['risk_amount']:.2f}`\n\n"
+        f"{link_line}"
     )
 
 
