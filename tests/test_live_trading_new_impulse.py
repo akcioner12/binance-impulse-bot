@@ -285,25 +285,6 @@ async def test_handle_new_impulse_proceeds_dump_reversal_without_climax():
 
 
 @pytest.mark.asyncio
-async def test_handle_new_impulse_climax_filter_does_not_apply_to_dump_continuation():
-    with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
-         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
-         patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
-             return_value=_analysis("continuation", funding_rate=0.00001, is_climax=True))), \
-         patch("live_trading.magnet_levels_module.find_magnet_levels") as mock_find, \
-         patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
-        result = await live_trading.handle_new_impulse(
-            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
-            direction="down", current_price=100.0, window_start_price=130.0,
-        )
-
-    assert result is not None
-    mock_find.assert_not_called()
-    mock_request.assert_called_once()
-
-
-@pytest.mark.asyncio
 async def test_handle_new_impulse_climax_filter_does_not_apply_to_pumps():
     with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
@@ -318,4 +299,47 @@ async def test_handle_new_impulse_climax_filter_does_not_apply_to_pumps():
         )
 
     assert result is not None
+    mock_request.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_new_impulse_skips_continuation_on_dumps():
+    """
+    Ретроспектива 14.09-15.09.2026 (сессия 4, continuation_backtest.py): вся
+    ветка continuation ни разу не проверялась на реальных данных до этого --
+    оказалось, что continuation на дампах (шорт по тренду падения) даёт
+    средний R -0.339 (t=-2.72, статистически значимый убыток, не шум) на 197
+    эпизодах. Continuation на пампах статистически нейтрален (avgR -0.005,
+    t=-0.08) и не трогается. Сигнал по continuation-дампу не создаётся вовсе.
+    """
+    with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
+         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
+             return_value=_analysis("continuation", funding_rate=0.00001))), \
+         patch("live_trading.trading_storage.create_trade_signal") as mock_create_signal, \
+         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+        result = await live_trading.handle_new_impulse(
+            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
+            direction="down", current_price=100.0, window_start_price=130.0,
+        )
+
+    assert result is None
+    mock_create_signal.assert_not_called()
+    mock_request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_new_impulse_proceeds_continuation_on_pumps():
+    with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
+         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
+             return_value=_analysis("continuation", funding_rate=0.00001))), \
+         patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
+         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+        result = await live_trading.handle_new_impulse(
+            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
+            direction="up", current_price=100.0, window_start_price=70.0,
+        )
+
+    assert result == {"classification": "continuation", "signal_id": 99, "awaiting_confirmation": True}
     mock_request.assert_called_once()

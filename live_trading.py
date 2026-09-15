@@ -78,6 +78,14 @@ PUMP_FUNDING_EXTREME_THRESHOLD = 0.00012
 # как остальные 666 дают +1.09 (t=8.52) -- почти весь эдж сохраняется, если
 # такие climax-эпизоды просто не торговать.
 
+# Ретроспектива 14-15.09.2026 (сессия 4, continuation_backtest.py): ветка
+# continuation (ставка "импульс продолжится", вход ПО тренду) ни разу не
+# проверялась на исторических данных до этого. Continuation на дампах (шорт
+# по тренду падения) даёт avgR -0.339 (t=-2.72, статистически значимый
+# убыток на 197 эпизодах) -- не торгуется вовсе. Continuation на пампах
+# статистически нейтрален (avgR -0.005, t=-0.08, чистый шум) -- не трогаем,
+# по решению пользователя (не вредит, хоть и не помогает).
+
 
 async def handle_new_impulse(
     session, chat_id: int, symbol: str, exchange: str, direction: str,
@@ -113,6 +121,9 @@ async def handle_new_impulse(
         if direction == "down" and classification == "reversal":
             if analysis["is_climax"]:
                 return None
+
+        if direction == "down" and classification == "continuation":
+            return None
 
         magnet_levels_list = []
         if classification == "reversal":
