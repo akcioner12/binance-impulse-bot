@@ -26,6 +26,16 @@ logger = logging.getLogger(__name__)
 _pending_setups: dict[str, dict] = {}
 _open_positions: dict[str, dict] = {}
 
+# Бронь слота на время анализа импульса (между проверкой лимита и постановкой
+# в _awaiting_confirmation внутри trade_signal_ux) -- прод-инцидент 14.09.2026:
+# DailyHighTracker при холодном старте выстрелил 41 сигналом почти одновременно,
+# и каждый вызов handle_new_impulse читал len(get_open_positions()) НЕЗАВИСИМО,
+# до того как хоть один успел что-то забронировать -- max_concurrent_trades
+# был массово превышен (22 позиции вместо заданного лимита). Добавление в это
+# множество происходит синхронно, ДО первого await, поэтому конкурентные вызовы
+# для других символов видят актуальную занятость немедленно.
+_reserved_symbols: set[str] = set()
+
 # Шаг, с которым обновляется ATR у долго ждущего сетапа. Триггеры считают
 # дистанцию отката от ATR на момент старта мониторинга -- если цена уходит
 # далеко без отката, эта величина устаревает относительно текущей волатильности
@@ -80,43 +90,53 @@ async def handle_new_impulse(
     profile = trading_storage.get_profile(chat_id)
     if profile is None or not profile["is_active"]:
         return None
-    if symbol in _pending_setups or symbol in _open_positions or trade_signal_ux.is_awaiting_confirmation(symbol):
+    if (
+        symbol in _pending_setups or symbol in _open_positions
+        or symbol in _reserved_symbols or trade_signal_ux.is_awaiting_confirmation(symbol)
+    ):
         return None
-    if len(trading_storage.get_open_positions(chat_id)) >= profile["max_concurrent_trades"]:
+    # Бронируем слот СИНХРОННО, до первого await -- иначе конкурентные вызовы
+    # для других символов (см. _reserved_symbols выше) читают тот же счётчик
+    # открытых позиций и все проходят проверку, пока ни один ещё не забронировал.
+    if len(trading_storage.get_open_positions(chat_id)) + len(_reserved_symbols) >= profile["max_concurrent_trades"]:
         return None
+    _reserved_symbols.add(symbol)
 
-    analysis = await impulse_analysis.analyze_impulse(session, symbol, exchange, direction, current_price)
-    classification = analysis["classification"]
+    try:
+        analysis = await impulse_analysis.analyze_impulse(session, symbol, exchange, direction, current_price)
+        classification = analysis["classification"]
 
-    if direction == "up" and classification == "reversal":
-        if abs(analysis["funding_rate"]) < PUMP_FUNDING_EXTREME_THRESHOLD:
-            return None
+        if direction == "up" and classification == "reversal":
+            if abs(analysis["funding_rate"]) < PUMP_FUNDING_EXTREME_THRESHOLD:
+                return None
 
-    if direction == "down" and classification == "reversal":
-        if analysis["is_climax"]:
-            return None
+        if direction == "down" and classification == "reversal":
+            if analysis["is_climax"]:
+                return None
 
-    magnet_levels_list = []
-    if classification == "reversal":
-        # Считаем ЗАРАНЕЕ (не в execute_setup после подтверждения), чтобы
-        # сообщение "Найден сетап" показывало реальные уровни, а не всегда
-        # "—" (прод-баг 14.09.2026: magnet_levels считался только постфактум).
-        daily_candles = await market_data.fetch_klines(session, exchange, symbol, "1d", limit=90)
-        weekly_candles = await market_data.fetch_klines(session, exchange, symbol, "1w", limit=52)
-        magnet_levels_list = magnet_levels_module.find_magnet_levels(daily_candles, weekly_candles, current_price, direction)
-        analysis["magnet_levels"] = magnet_levels_list
+        magnet_levels_list = []
+        if classification == "reversal":
+            # Считаем ЗАРАНЕЕ (не в execute_setup после подтверждения), чтобы
+            # сообщение "Найден сетап" показывало реальные уровни, а не всегда
+            # "—" (прод-баг 14.09.2026: magnet_levels считался только постфактум).
+            daily_candles = await market_data.fetch_klines(session, exchange, symbol, "1d", limit=90)
+            weekly_candles = await market_data.fetch_klines(session, exchange, symbol, "1w", limit=52)
+            magnet_levels_list = magnet_levels_module.find_magnet_levels(daily_candles, weekly_candles, current_price, direction)
+            analysis["magnet_levels"] = magnet_levels_list
 
-    signal_id = trading_storage.create_trade_signal(
-        chat_id=chat_id, symbol=symbol, exchange=exchange,
-        impulse_direction=direction, classification=classification,
-    )
+        signal_id = trading_storage.create_trade_signal(
+            chat_id=chat_id, symbol=symbol, exchange=exchange,
+            impulse_direction=direction, classification=classification,
+        )
 
-    await trade_signal_ux.request_confirmation(
-        session, chat_id, symbol, exchange, direction, classification,
-        current_price, window_start_price, profile, analysis, signal_id,
-        magnet_levels=magnet_levels_list, execute_fn=execute_setup,
-    )
-    return {"classification": classification, "signal_id": signal_id, "awaiting_confirmation": True}
+        await trade_signal_ux.request_confirmation(
+            session, chat_id, symbol, exchange, direction, classification,
+            current_price, window_start_price, profile, analysis, signal_id,
+            magnet_levels=magnet_levels_list, execute_fn=execute_setup,
+        )
+        return {"classification": classification, "signal_id": signal_id, "awaiting_confirmation": True}
+    finally:
+        _reserved_symbols.discard(symbol)
 
 
 def _compute_wave_size_multiplier(chat_id: int, symbol: str, signal_id: int) -> float | None:

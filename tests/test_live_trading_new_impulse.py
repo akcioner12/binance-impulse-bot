@@ -1,3 +1,5 @@
+import asyncio
+
 import pytest
 from unittest.mock import AsyncMock, patch
 
@@ -7,6 +9,7 @@ import live_trading
 def setup_function():
     live_trading._pending_setups.clear()
     live_trading._open_positions.clear()
+    live_trading._reserved_symbols.clear()
 
 
 @pytest.mark.asyncio
@@ -192,6 +195,49 @@ async def test_handle_new_impulse_funding_filter_does_not_apply_to_dumps():
         )
 
     assert result is not None
+    mock_request.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_new_impulse_race_does_not_exceed_max_concurrent_trades():
+    """
+    14.09.2026: DailyHighTracker при первом запуске выстрелил 41 сигналом почти
+    одновременно (холодный старт после сидирования 10-дневной истории дампов).
+    Каждый вызов handle_new_impulse независимо читал len(get_open_positions())
+    ДО того, как хоть один из них успел что-то забронировать -- лимит
+    max_concurrent_trades массово превышался (22 позиции вместо заданного).
+    Слот должен резервироваться синхронно, ДО первого await, чтобы конкурентные
+    вызовы для разных символов видели актуальную занятость.
+    """
+    profile = {"is_active": 1, "max_concurrent_trades": 1}
+    analyze_gate = asyncio.Event()
+
+    async def slow_analyze(*args, **kwargs):
+        await analyze_gate.wait()
+        return _analysis("continuation", funding_rate=0.0)
+
+    with patch("live_trading.trading_storage.get_profile", return_value=profile), \
+         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("live_trading.impulse_analysis.analyze_impulse", new=slow_analyze), \
+         patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
+         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+
+        task_a = asyncio.create_task(live_trading.handle_new_impulse(
+            session=None, chat_id=111, symbol="AAAUSDT", exchange="Binance",
+            direction="up", current_price=100.0, window_start_price=70.0,
+        ))
+        await asyncio.sleep(0)  # дать task_a дойти до await analyze_gate.wait()
+
+        result_b = await live_trading.handle_new_impulse(
+            session=None, chat_id=111, symbol="BBBUSDT", exchange="Binance",
+            direction="up", current_price=100.0, window_start_price=70.0,
+        )
+
+        analyze_gate.set()
+        result_a = await task_a
+
+    assert result_b is None
+    assert result_a is not None
     mock_request.assert_called_once()
 
 
