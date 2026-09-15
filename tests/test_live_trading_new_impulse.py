@@ -66,10 +66,10 @@ async def test_handle_new_impulse_none_when_at_max_concurrent_trades():
 PROFILE = {"is_active": 1, "max_concurrent_trades": 3}
 
 
-def _analysis(classification, funding_rate):
+def _analysis(classification, funding_rate, is_climax=False):
     return {
         "classification": classification, "trend_4h": "up", "relevant_divergence": False,
-        "is_climax": False, "funding_rate": funding_rate, "oi_diverging": False,
+        "is_climax": is_climax, "funding_rate": funding_rate, "oi_diverging": False,
         "near_significant_level": False, "vwap_deviation": 1.0, "atr_15m": 1.0, "atr_1h": 2.0,
     }
 
@@ -189,6 +189,86 @@ async def test_handle_new_impulse_funding_filter_does_not_apply_to_dumps():
         result = await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="down", current_price=100.0, window_start_price=130.0,
+        )
+
+    assert result is not None
+    mock_request.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_new_impulse_skips_dump_reversal_with_climax():
+    """
+    Ретроспектива 14.09.2026 (сессия 4, dump_signals_and_outcomes.py): дампы,
+    где входная 15м-свеча -- объёмный climax, дают avgR +0.06 (t=0.40,
+    статистически неотличимо от нуля) на 125 эпизодах из 791, тогда как
+    остальные 666 дают +1.09 (t=8.52). Climax-эпизоды исключаются -- сигнал
+    вообще не создаётся, как и слабый funding для пампов.
+    """
+    with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
+         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
+             return_value=_analysis("reversal", funding_rate=0.00001, is_climax=True))), \
+         patch("live_trading.trading_storage.create_trade_signal") as mock_create_signal, \
+         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+        result = await live_trading.handle_new_impulse(
+            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
+            direction="down", current_price=100.0, window_start_price=130.0,
+        )
+
+    assert result is None
+    mock_create_signal.assert_not_called()
+    mock_request.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_handle_new_impulse_proceeds_dump_reversal_without_climax():
+    with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
+         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
+             return_value=_analysis("reversal", funding_rate=0.00001, is_climax=False))), \
+         patch("live_trading.market_data.fetch_klines", new=AsyncMock(return_value=[])), \
+         patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
+         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+        result = await live_trading.handle_new_impulse(
+            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
+            direction="down", current_price=100.0, window_start_price=130.0,
+        )
+
+    assert result == {"classification": "reversal", "signal_id": 99, "awaiting_confirmation": True}
+    mock_request.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_new_impulse_climax_filter_does_not_apply_to_dump_continuation():
+    with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
+         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
+             return_value=_analysis("continuation", funding_rate=0.00001, is_climax=True))), \
+         patch("live_trading.magnet_levels_module.find_magnet_levels") as mock_find, \
+         patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
+         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+        result = await live_trading.handle_new_impulse(
+            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
+            direction="down", current_price=100.0, window_start_price=130.0,
+        )
+
+    assert result is not None
+    mock_find.assert_not_called()
+    mock_request.assert_called_once()
+
+
+@pytest.mark.asyncio
+async def test_handle_new_impulse_climax_filter_does_not_apply_to_pumps():
+    with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
+         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
+             return_value=_analysis("reversal", funding_rate=0.0002, is_climax=True))), \
+         patch("live_trading.market_data.fetch_klines", new=AsyncMock(return_value=[])), \
+         patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
+         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+        result = await live_trading.handle_new_impulse(
+            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
+            direction="up", current_price=100.0, window_start_price=70.0,
         )
 
     assert result is not None

@@ -61,6 +61,13 @@ WAVE_SIZE_MULTIPLIERS = {0: 1.0, 1: 0.5}  # wave_count >= 2 -> сетап про
 # это не касается -- там эдж сильный и без дополнительных фильтров.
 PUMP_FUNDING_EXTREME_THRESHOLD = 0.00012
 
+# Аналогичная находка 14.09.2026 (сессия 4, dump_signals_and_outcomes.py) для
+# МЕДЛЕННЫХ (многодневных) дампов, которые ловит новый DailyHighTracker:
+# эпизоды, где входная 15м-свеча -- объёмный climax, дают avgR +0.06 (t=0.40,
+# статистически неотличимо от нуля) на 125 из 791 проверенных эпизодов, тогда
+# как остальные 666 дают +1.09 (t=8.52) -- почти весь эдж сохраняется, если
+# такие climax-эпизоды просто не торговать.
+
 
 async def handle_new_impulse(
     session, chat_id: int, symbol: str, exchange: str, direction: str,
@@ -83,6 +90,10 @@ async def handle_new_impulse(
 
     if direction == "up" and classification == "reversal":
         if abs(analysis["funding_rate"]) < PUMP_FUNDING_EXTREME_THRESHOLD:
+            return None
+
+    if direction == "down" and classification == "reversal":
+        if analysis["is_climax"]:
             return None
 
     magnet_levels_list = []
