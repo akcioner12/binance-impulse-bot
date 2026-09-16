@@ -63,14 +63,19 @@ def test_part2_merges_into_still_open_part1_position():
     assert "BTCUSDT" not in live_trading._pending_setups  # обе части обработаны
 
 
-def test_part2_opens_independent_position_when_part1_already_closed():
+def test_part2_opens_independent_position_when_part1_already_closed_with_tp():
+    """
+    Часть 1 закрылась (например, отдельным стопом-на-безубытке ПОСЛЕ TP), но
+    setup НЕ помечен invalidated -- часть 2 по-прежнему открывает независимую
+    позицию, как и задумано (не "расфиливаем" уже зафиксированные тейки).
+    """
     live_trading._pending_setups["BTCUSDT"] = _make_pending_setup()
     with patch("live_trading.trading_storage.create_position", side_effect=[1, 2]), \
          patch("live_trading.trading_storage.update_trade_signal_status"):
         live_trading.handle_price_tick("BTCUSDT", price=100.0)
         live_trading.handle_price_tick("BTCUSDT", price=99.2)  # часть 1 срабатывает, position id=1
 
-    # Имитируем, что позиция части 1 уже закрылась по стопу (до срабатывания части 2)
+    # Имитируем, что позиция части 1 уже закрылась (setup НЕ инвалидирован)
     live_trading._open_positions["BTCUSDT"]["state"].closed = True
 
     with patch("live_trading.trading_storage.create_position", return_value=2), \
@@ -80,6 +85,35 @@ def test_part2_opens_independent_position_when_part1_already_closed():
 
     assert "part2_filled" in events
     mock_close.assert_not_called()  # НЕ пересобираем закрытую позицию -- часть 2 отдельная
+
+
+def test_part2_skips_entry_when_setup_invalidated_by_zero_tp_stop():
+    """
+    Прод-находка 14-16.09.2026: если часть 1 стопится с 0 взятых TP (тезис на
+    разворот опровергнут), _process_open_position_tick помечает setup
+    invalidated=True. Часть 2, срабатывая позже, НЕ должна открывать новую
+    независимую позицию -- сетап просто отменяется. Бэктест на 2,5 мес.
+    подтвердил: +$1713 (+4.9%) за период при таком поведении.
+    """
+    live_trading._pending_setups["BTCUSDT"] = _make_pending_setup()
+    with patch("live_trading.trading_storage.create_position", return_value=1), \
+         patch("live_trading.trading_storage.update_trade_signal_status"):
+        live_trading.handle_price_tick("BTCUSDT", price=100.0)
+        live_trading.handle_price_tick("BTCUSDT", price=99.2)  # часть 1 срабатывает, position id=1
+
+    # Имитируем реальный стоп с 0 TP (то, что реально делает _process_open_position_tick)
+    del live_trading._open_positions["BTCUSDT"]
+    live_trading._pending_setups["BTCUSDT"]["invalidated"] = True
+
+    with patch("live_trading.trading_storage.create_position") as mock_create, \
+         patch("live_trading.trading_storage.close_position") as mock_close, \
+         patch("live_trading.trading_storage.update_trade_signal_status"):
+        events = live_trading.handle_price_tick("BTCUSDT", price=98.0)  # часть 2 срабатывает
+
+    assert "part2_filled" in events  # триггер всё равно фиксируется как сработавший
+    mock_create.assert_not_called()  # но новая позиция НЕ открывается
+    mock_close.assert_not_called()
+    assert "BTCUSDT" not in live_trading._open_positions  # осталась закрытой от части 1, не переоткрыта
 
 
 def test_setup_does_not_expire_below_pump_extension_cap():

@@ -137,6 +137,47 @@ def test_tick_tp_hit_logs_event(caplog):
     assert any("BTCUSDT" in r.message and "tp1_hit" in r.message for r in caplog.records)
 
 
+def test_tick_stop_loss_with_zero_tp_invalidates_pending_setup():
+    """
+    Прод-находка 14-16.09.2026 (реальный live paper-trading): если позиция
+    от части 1 стопится с НУЛЁМ взятых TP до того, как сработает часть 2,
+    это означает, что тезис на разворот уже опровергнут рынком. Раньше часть 2
+    всё равно открывала вторую НЕЗАВИСИМУЮ позицию вслепую (см. AKEUSDT/
+    PUFFERUSDT/CVCUSDT 15-16.09 -- треть сигналов в сутки дали двойной стоп
+    от одного и того же исходного сигнала). Бэктест на 2,5 мес. подтвердил:
+    отмена части 2 в этом случае даёт +$1713 (+4.9%) за период. Часть 2
+    по-прежнему ждёт своего триггера (setup остаётся в _pending_setups), но
+    помечается invalidated -- при срабатывании она не откроет новую позицию.
+    """
+    _make_open_position()  # tp_hit_count=0 по умолчанию
+    live_trading._pending_setups["BTCUSDT"] = {"dummy_setup": True}
+
+    with patch("live_trading.trading_storage.adjust_paper_balance"), \
+         patch("live_trading.trading_storage.close_position"):
+        live_trading._process_open_position_tick("BTCUSDT", price=96.0)  # стоп, 0 TP взято
+
+    assert live_trading._pending_setups["BTCUSDT"]["invalidated"] is True
+
+
+def test_tick_stop_loss_after_partial_tp_does_not_invalidate_pending_setup():
+    """
+    Регрессия: если стоп срабатывает уже ПОСЛЕ того, как хотя бы один TP взят
+    (например, стоп на безубытке+ после TP1), тезис на разворот был верным --
+    здесь НЕ нужно отменять часть 2, старое поведение (независимая вторая
+    нога) сохраняется как задумано.
+    """
+    state = _make_open_position()
+    state.take_profits[0]["filled"] = True
+    state.tp_hit_count = 1
+    live_trading._pending_setups["BTCUSDT"] = {"dummy_setup": True}
+
+    with patch("live_trading.trading_storage.adjust_paper_balance"), \
+         patch("live_trading.trading_storage.close_position"):
+        live_trading._process_open_position_tick("BTCUSDT", price=96.0)  # стоп после частичного TP
+
+    assert "invalidated" not in live_trading._pending_setups["BTCUSDT"]
+
+
 def test_tick_closed_chandelier_notifies_full_close():
     state = _make_open_position()
     state.take_profits[0]["filled"] = True

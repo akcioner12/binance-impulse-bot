@@ -454,6 +454,14 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
             f"Автотрейдинг [{symbol}]: {stop_event['event']}, "
             f"цена={stop_event['exit_price']:.6g}, pnl={stop_event['pnl_delta']:+.2f}"
         )
+        if state.tp_hit_count == 0:
+            # Тезис на разворот опровергнут рынком (ни один TP не взят до стопа) --
+            # если вторая часть входа ещё не сработала, отменяем её (см.
+            # _handle_part_fill), а не даём открыть вторую независимую позицию
+            # вслепую (прод-находка 14-16.09.2026, см. докстринг _handle_part_fill).
+            pending = _pending_setups.get(symbol)
+            if pending is not None:
+                pending["invalidated"] = True
         del _open_positions[symbol]
         return [stop_event["event"]]
 
@@ -564,7 +572,18 @@ def _handle_part_fill(setup: dict, symbol: str, price: float) -> None:
     Если позиция первой части уже закрыта (SL) или частично зафиксирована
     (сработал TP) -- часть открывает отдельную независимую позицию, чтобы не
     "расфиливать" уже зафиксированные тейки при пересборке сетки.
+
+    Исключение (прод-находка 14-16.09.2026): если позиция первой части
+    стопилась с НУЛЁМ взятых TP -- тезис на разворот уже опровергнут рынком,
+    setup помечается invalidated в _process_open_position_tick, и эта часть
+    просто ничего не открывает. Живые данные показали, что без этого исключения
+    треть сигналов в сутки давала ДВА независимых стопа подряд от одного и
+    того же сигнала (AKEUSDT/PUFFERUSDT/CVCUSDT, 15-16.09.2026); бэктест на
+    2,5 мес. подтвердил +$1713 (+4.9%) итогового PnL при этом исключении.
     """
+    if setup.get("invalidated"):
+        return
+
     profile = setup["profile"]
     direction = position_manager.determine_trade_direction(setup["impulse_direction"], "reversal")
     existing = _open_positions.get(symbol)
