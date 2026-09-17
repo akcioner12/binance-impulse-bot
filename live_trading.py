@@ -7,7 +7,7 @@ paper-позиции. Состояние (ожидающие сетапы, от�
 """
 
 import logging
-from datetime import datetime, timedelta
+from datetime import datetime, timedelta, timezone
 
 import trading_storage
 import impulse_analysis
@@ -70,6 +70,14 @@ WAVE_SIZE_MULTIPLIERS = {0: 1.0, 1: 0.5}  # wave_count >= 2 -> сетап про
 # продолжающие платить несмотря на рост (короткий сквиз без топлива). Дампов
 # это не касается -- там эдж сильный и без дополнительных фильтров.
 PUMP_FUNDING_EXTREME_THRESHOLD = 0.00012
+
+# Находка 16.09.2026 (бэктест 2,5 мес., 257 сделок, "зависшие" сделки):
+# пампы (шорт), простоявшие 24ч+ взяв МАКСИМУМ 1 тейк и не закрывшись,
+# в среднем едут дальше ПРОТИВ нас (принудительный выход на 24ч дал бы
+# +$2894 за период вместо естественного досиживания, n=25). Для дампов
+# (лонг) эффект ОБРАТНЫЙ -- досиживание выгоднее (+$1554, n=43) -- поэтому
+# правило применяется ТОЛЬКО к пампам.
+PUMP_STUCK_TIMEOUT_HOURS = 24
 
 # Аналогичная находка 14.09.2026 (сессия 4, dump_signals_and_outcomes.py) для
 # МЕДЛЕННЫХ (многодневных) дампов, которые ловит новый DailyHighTracker:
@@ -237,7 +245,10 @@ async def _open_continuation_position(
         stop_loss=result["stop_loss"], take_profits=result["take_profits"],
         breakeven_after_tp=profile["breakeven_after_tp"],
     )
-    _open_positions[symbol] = {"chat_id": chat_id, "state": state, "atr_1h": analysis["atr_1h"]}
+    _open_positions[symbol] = {
+        "chat_id": chat_id, "state": state, "atr_1h": analysis["atr_1h"],
+        "opened_at": datetime.now(timezone.utc).replace(tzinfo=None),
+    }
     trading_storage.update_trade_signal_status(signal_id, "executed")
 
     snapshot = get_position_snapshot(symbol)
@@ -367,7 +378,16 @@ def restore_open_positions() -> int:
             chandelier.stop_price = row["chandelier_stop_price"]
             state.chandelier = chandelier
 
-        _open_positions[row["symbol"]] = {"chat_id": row["chat_id"], "state": state, "atr_1h": row["atr_1h"]}
+        opened_at = None
+        if row["opened_at"]:
+            try:
+                opened_at = datetime.strptime(row["opened_at"], "%Y-%m-%d %H:%M:%S")
+            except ValueError:
+                opened_at = None
+
+        _open_positions[row["symbol"]] = {
+            "chat_id": row["chat_id"], "state": state, "atr_1h": row["atr_1h"], "opened_at": opened_at,
+        }
         restored += 1
     return restored
 
@@ -439,11 +459,57 @@ def _format_close_report(symbol: str, event: dict) -> str:
     )
 
 
+def _format_timeout_report(symbol: str, event: dict) -> str:
+    return (
+        f"⏱ *Закрыто по таймауту {PUMP_STUCK_TIMEOUT_HOURS}ч: {symbol}*\n\n"
+        f"Цена закрытия: `{event['exit_price']:.6g}`\n"
+        f"PnL: `{event['pnl_delta']:+.2f}`\n"
+        f"Памп простоял {PUMP_STUCK_TIMEOUT_HOURS}ч без реального прогресса "
+        f"(максимум 1 тейк) — закрыто принудительно по рынку"
+    )
+
+
+def _check_pump_stuck_timeout(entry: dict, price: float) -> dict | None:
+    """
+    См. PUMP_STUCK_TIMEOUT_HOURS выше -- только пампы (short), максимум 1
+    взятый тейк, не закрыта, и с момента входа прошло >= порога.
+    """
+    state = entry["state"]
+    opened_at = entry.get("opened_at")
+    if opened_at is None or state.closed:
+        return None
+    if state.direction != "short" or state.tp_hit_count > 1:
+        return None
+    now = datetime.now(timezone.utc).replace(tzinfo=None)
+    if now - opened_at < timedelta(hours=PUMP_STUCK_TIMEOUT_HOURS):
+        return None
+
+    pnl = order_executor.calculate_position_pnl(state.direction, state.avg_entry_price, price, state.remaining_quantity)
+    state.closed = True
+    return {"event": "closed_timeout_24h", "pnl_delta": pnl, "exit_price": price}
+
+
 def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
     entry = _open_positions[symbol]
     state = entry["state"]
     chat_id = entry["chat_id"]
     events = []
+
+    timeout_event = _check_pump_stuck_timeout(entry, price)
+    if timeout_event is not None:
+        trading_storage.adjust_paper_balance(chat_id, timeout_event["pnl_delta"])
+        trading_storage.close_position(state.position_id, realized_pnl=timeout_event["pnl_delta"])
+        _queue_notification(chat_id, _format_timeout_report(symbol, timeout_event))
+        logger.info(
+            f"Автотрейдинг [{symbol}]: {timeout_event['event']}, "
+            f"цена={timeout_event['exit_price']:.6g}, pnl={timeout_event['pnl_delta']:+.2f}"
+        )
+        if state.tp_hit_count == 0:
+            pending = _pending_setups.get(symbol)
+            if pending is not None:
+                pending["invalidated"] = True
+        del _open_positions[symbol]
+        return [timeout_event["event"]]
 
     stop_event = order_executor.check_stop_hit(state, price, entry["atr_1h"])
     if stop_event is not None:
@@ -587,13 +653,23 @@ def _handle_part_fill(setup: dict, symbol: str, price: float) -> None:
     profile = setup["profile"]
     direction = position_manager.determine_trade_direction(setup["impulse_direction"], "reversal")
     existing = _open_positions.get(symbol)
+    is_merge = existing is not None and not existing["state"].closed and existing["state"].tp_hit_count == 0
 
-    if existing is not None and not existing["state"].closed and existing["state"].tp_hit_count == 0:
+    if is_merge:
         old_state = existing["state"]
         fills = [(old_state.avg_entry_price, old_state.quantity), (price, setup["part_size"])]
         trading_storage.close_position(old_state.position_id, realized_pnl=0.0)
     else:
         fills = [(price, setup["part_size"])]
+
+    # При слиянии части 2 в ещё открытую позицию части 1 сохраняем ИСХОДНОЕ
+    # время входа (не сбрасываем на "сейчас") -- иначе таймаут "зависшего
+    # пампа" (PUMP_STUCK_TIMEOUT_HOURS) отсчитывался бы заново от каждого
+    # слияния, а не от реального момента первого входа в сделку.
+    opened_at = (
+        existing["opened_at"] if is_merge and existing.get("opened_at")
+        else datetime.now(timezone.utc).replace(tzinfo=None)
+    )
 
     result = order_executor.open_paper_position(
         chat_id=setup["chat_id"], symbol=symbol, exchange=setup["exchange"], direction=direction,
@@ -607,5 +683,7 @@ def _handle_part_fill(setup: dict, symbol: str, price: float) -> None:
         stop_loss=result["stop_loss"], take_profits=result["take_profits"],
         breakeven_after_tp=profile["breakeven_after_tp"],
     )
-    _open_positions[symbol] = {"chat_id": setup["chat_id"], "state": new_state, "atr_1h": setup["atr_1h"]}
+    _open_positions[symbol] = {
+        "chat_id": setup["chat_id"], "state": new_state, "atr_1h": setup["atr_1h"], "opened_at": opened_at,
+    }
     trading_storage.update_trade_signal_status(setup["signal_id"], "executed")

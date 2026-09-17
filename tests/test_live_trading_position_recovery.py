@@ -1,3 +1,5 @@
+from datetime import datetime
+
 import trading_storage
 import position_manager
 import live_trading
@@ -77,6 +79,22 @@ def test_restore_open_positions_reconstructs_active_chandelier():
     assert state.chandelier.extreme_price == 70.0
     assert state.chandelier.stop_price == 95.0
     assert state.tp_hit_count == 3
+
+
+def test_restore_open_positions_parses_opened_at():
+    """
+    Нужно для правила PUMP_STUCK_TIMEOUT_HOURS (16.09.2026) -- без времени
+    входа "зависший памп" не может быть найден после рестарта бота.
+    """
+    trading_storage.create_position(
+        chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="short",
+        mode="paper", avg_entry_price=100.0, quantity=10.0, stop_loss=103.0,
+    )
+
+    live_trading.restore_open_positions()
+
+    opened_at = live_trading._open_positions["BTCUSDT"]["opened_at"]
+    assert isinstance(opened_at, datetime)
 
 
 def test_restore_open_positions_skips_closed_positions():
