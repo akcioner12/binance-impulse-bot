@@ -100,6 +100,19 @@ DUMP_ANCHOR_STALE_BOUNCE_THRESHOLD_PCT = 15.0
 DUMP_ANCHOR_STALE_SIZE_MULTIPLIER = 0.5
 
 
+# Находка 17.09.2026 (257 сделок, 2,5 мес.): эдж у дампов стабильно сильнее
+# (avgR ~0.7-0.9), чем у пампов (~0.1-0.5 даже после фильтра funding).
+# Асимметричный риск 2%/4% вместо равномерных 3%/3% (при том же среднем
+# риске на портфель) даёт +$8019 (+22%) за период. Заменяет единый
+# profile["risk_percent"] ТОЛЬКО для сайзинга автотрейдинг-позиций.
+PUMP_RISK_PERCENT = 2.0
+DUMP_RISK_PERCENT = 4.0
+
+
+def _risk_percent_for_direction(direction: str) -> float:
+    return PUMP_RISK_PERCENT if direction == "up" else DUMP_RISK_PERCENT
+
+
 def _is_dump_anchor_stale(daily_candles: list[dict]) -> bool:
     """
     Смотрит на последние ~12 дневных свечей: где был максимум (пик) и был ли
@@ -277,7 +290,7 @@ async def _open_continuation_position(
     )
     balance = trading_storage.get_paper_balance(chat_id) or 0.0
     size = position_manager.calculate_position_size(
-        balance, profile["risk_percent"], current_price, stop_loss
+        balance, _risk_percent_for_direction(direction), current_price, stop_loss
     ) * size_multiplier
 
     result = order_executor.open_paper_position(
@@ -326,7 +339,7 @@ async def _create_pending_reversal_setup(
     )
     balance = trading_storage.get_paper_balance(chat_id) or 0.0
     total_size = position_manager.calculate_position_size(
-        balance, profile["risk_percent"], current_price, estimated_stop_loss
+        balance, _risk_percent_for_direction(direction), current_price, estimated_stop_loss
     ) * size_multiplier
 
     _pending_setups[symbol] = {
