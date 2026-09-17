@@ -29,7 +29,7 @@ async def test_set_bot_commands_sets_extended_commands_scoped_to_admin_chat():
     command_names = [c["command"] for c in payload["commands"]]
     assert command_names == [
         "start", "stop", "status", "trading_setup", "emergency",
-        "reset_paper_balance", "subscribers", "set_max_trades",
+        "reset_paper_balance", "subscribers", "set_max_trades", "close_position",
     ]
 
 

@@ -34,6 +34,17 @@ def close_all_positions_now(chat_id: int) -> list[str]:
     return closed_symbols
 
 
+def close_position_now(chat_id: int, symbol: str) -> bool:
+    """Точечная версия close_all_positions_now -- закрывает ОДНУ конкретную позицию."""
+    entry = live_trading._open_positions.get(symbol)
+    if entry is None or entry["chat_id"] != chat_id:
+        return False
+    state = entry["state"]
+    state.chandelier = None
+    state.stop_loss = float("inf") if state.direction == "long" else float("-inf")
+    return True
+
+
 def move_all_to_breakeven_plus_now(chat_id: int, commission_pct: float = 0.08) -> list[str]:
     updated_symbols = []
     for symbol, entry in live_trading._open_positions.items():

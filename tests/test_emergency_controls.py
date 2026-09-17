@@ -60,6 +60,42 @@ def test_close_all_positions_now_resets_active_chandelier():
     assert state.chandelier is None  # сброшен -- сработает обычный (принудительный) SL, не Chandelier
 
 
+def test_close_position_now_forces_stop_loss_for_matching_symbol():
+    state = order_executor.OpenPositionState(
+        position_id=1, direction="long", avg_entry_price=100.0, quantity=1.0,
+        stop_loss=97.0, take_profits=[], breakeven_after_tp=2,
+    )
+    state.chandelier = order_executor.ChandelierTrailingStop(direction="long")
+    state.chandelier.update(price=120.0, atr=2.0)
+    live_trading._open_positions["KOMAUSDT"] = {"chat_id": 111, "state": state, "atr_1h": 2.0}
+
+    result = emergency_controls.close_position_now(111, "KOMAUSDT")
+
+    assert result is True
+    assert state.chandelier is None
+    assert state.stop_loss == float("inf")
+    closed = order_executor.check_stop_hit(state, price=99.0, atr_1h=2.0)
+    assert closed["event"] == "closed_stop_loss"
+
+
+def test_close_position_now_returns_false_when_symbol_not_open():
+    result = emergency_controls.close_position_now(111, "KOMAUSDT")
+    assert result is False
+
+
+def test_close_position_now_returns_false_for_wrong_chat_id():
+    state = order_executor.OpenPositionState(
+        position_id=1, direction="long", avg_entry_price=100.0, quantity=1.0,
+        stop_loss=97.0, take_profits=[], breakeven_after_tp=2,
+    )
+    live_trading._open_positions["KOMAUSDT"] = {"chat_id": 222, "state": state, "atr_1h": 2.0}
+
+    result = emergency_controls.close_position_now(111, "KOMAUSDT")
+
+    assert result is False
+    assert state.stop_loss == 97.0  # не тронута
+
+
 def test_move_all_to_breakeven_plus_now_updates_stop_and_db():
     state = order_executor.OpenPositionState(
         position_id=1, direction="long", avg_entry_price=100.0, quantity=1.0,

@@ -182,6 +182,7 @@ _ADMIN_ONLY_COMMANDS = [
     {"command": "reset_paper_balance", "description": "Сбросить paper-trading баланс до $10 000"},
     {"command": "subscribers", "description": "Список подписчиков (chat_id + профиль)"},
     {"command": "set_max_trades", "description": "Изменить макс. число одновременных сделок"},
+    {"command": "close_position", "description": "Закрыть одну конкретную открытую позицию"},
 ]
 
 

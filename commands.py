@@ -114,6 +114,11 @@ async def _handle_command(session: aiohttp.ClientSession, chat_id: int, text: st
             return
         await _handle_set_max_trades_command(session, chat_id, stripped)
 
+    elif stripped.startswith("/close_position"):
+        if chat_id != ADMIN_CHAT_ID:
+            return
+        await _handle_close_position_command(session, chat_id, stripped)
+
 
 async def _handle_emergency_command(session: aiohttp.ClientSession, chat_id: int):
     profile = trading_storage.get_profile(chat_id)
@@ -215,6 +220,20 @@ async def _handle_set_max_trades_command(session: aiohttp.ClientSession, chat_id
 
     trading_storage.update_max_concurrent_trades(chat_id, value)
     await send_text(session, chat_id, f"✅ Максимум одновременных сделок: {value}.")
+
+
+async def _handle_close_position_command(session: aiohttp.ClientSession, chat_id: int, stripped: str):
+    parts = stripped.split()
+    if len(parts) != 2:
+        await send_text(session, chat_id, "Использование: `/close_position SYMBOL` (например, `/close_position KOMAUSDT`)")
+        return
+
+    symbol = parts[1].upper()
+    closed = emergency_controls.close_position_now(chat_id, symbol)
+    if closed:
+        await send_text(session, chat_id, f"🔴 Закрытие {symbol} запущено (сработает на ближайшем тике).")
+    else:
+        await send_text(session, chat_id, f"Открытой позиции по {symbol} нет.")
 
 
 async def _handle_callback_query(session: aiohttp.ClientSession, callback_query: dict):
