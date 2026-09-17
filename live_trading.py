@@ -86,6 +86,49 @@ PUMP_STUCK_TIMEOUT_HOURS = 24
 # как остальные 666 дают +1.09 (t=8.52) -- почти весь эдж сохраняется, если
 # такие climax-эпизоды просто не торговать.
 
+# Находка 16-17.09.2026 (бэктест 140 дамп-сделок, 2,5 мес., живой пример
+# POWRUSDT 17.09): DailyHighTracker сравнивает цену со СКОЛЬЗЯЩИМ 10-дневным
+# максимумом, который не сбрасывается, пока не пробит заново -- если сильное
+# движение было несколько дней назад, а с тех пор цена просто колеблется в
+# консолидации, детектор может сработать на СТАРЫЙ пик, а не на свежий обвал.
+# Бэктест подтвердил: "свежие" якори (пик <1.5 дня назад, без отскока >=15%)
+# дают avgR +1.168, "устаревшие" -- всего +0.471 (тоже в плюс, но вдвое
+# слабее). Вместо полного отказа от устаревших сигналов -- уменьшаем размер,
+# чтобы сохранить часть эджа, а не терять его целиком.
+DUMP_ANCHOR_STALE_DAYS_THRESHOLD = 1.5
+DUMP_ANCHOR_STALE_BOUNCE_THRESHOLD_PCT = 15.0
+DUMP_ANCHOR_STALE_SIZE_MULTIPLIER = 0.5
+
+
+def _is_dump_anchor_stale(daily_candles: list[dict]) -> bool:
+    """
+    Смотрит на последние ~12 дневных свечей: где был максимум (пик) и был ли
+    после него заметный отскок вверх (>=DUMP_ANCHOR_STALE_BOUNCE_THRESHOLD_PCT
+    от локального дна) прежде, чем цена снова просела. Если пик достаточно
+    старый (>=DUMP_ANCHOR_STALE_DAYS_THRESHOLD дней) И был такой отскок --
+    это не свежий обвал, а старая консолидация.
+    """
+    recent = daily_candles[-12:]
+    if len(recent) < 3:
+        return False
+
+    peak_idx = max(range(len(recent)), key=lambda i: recent[i]["high"])
+    peak_value = recent[peak_idx]["high"]
+    days_ago = len(recent) - 1 - peak_idx
+    if days_ago < DUMP_ANCHOR_STALE_DAYS_THRESHOLD:
+        return False
+
+    max_bounce_pct = 0.0
+    local_low = peak_value
+    for c in recent[peak_idx + 1:]:
+        local_low = min(local_low, c["low"])
+        if local_low > 0:
+            bounce = (c["high"] - local_low) / local_low * 100
+            max_bounce_pct = max(max_bounce_pct, bounce)
+
+    return max_bounce_pct >= DUMP_ANCHOR_STALE_BOUNCE_THRESHOLD_PCT
+
+
 # Ретроспектива 14-15.09.2026 (сессия 4, continuation_backtest.py): ветка
 # continuation (ставка "импульс продолжится", вход ПО тренду) ни разу не
 # проверялась на исторических данных до этого. Continuation на дампах (шорт
@@ -142,6 +185,8 @@ async def handle_new_impulse(
             weekly_candles = await market_data.fetch_klines(session, exchange, symbol, "1w", limit=52)
             magnet_levels_list = magnet_levels_module.find_magnet_levels(daily_candles, weekly_candles, current_price, direction)
             analysis["magnet_levels"] = magnet_levels_list
+            if direction == "down":
+                analysis["stale_anchor"] = _is_dump_anchor_stale(daily_candles)
 
         signal_id = trading_storage.create_trade_signal(
             chat_id=chat_id, symbol=symbol, exchange=exchange,
@@ -184,6 +229,9 @@ async def execute_setup(
         trading_storage.update_trade_signal_status(signal_id, "expired")
         logger.info(f"Автотрейдинг [{symbol}]: сетап пропущен -- уже 2+ волны за последние {WAVE_LOOKBACK_HOURS}ч")
         return {"classification": classification, "signal_id": signal_id, "skipped": "multiwave_protection"}
+
+    if analysis.get("stale_anchor"):
+        size_multiplier *= DUMP_ANCHOR_STALE_SIZE_MULTIPLIER
 
     if classification == "continuation":
         return await _open_continuation_position(
