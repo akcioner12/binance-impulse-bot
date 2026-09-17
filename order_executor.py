@@ -26,6 +26,7 @@ def open_paper_position(
     fixed_percent: float | None,
     tp_split_preset: str,
     breakeven_after_tp: int = 2,
+    r_multiples: tuple[float, float, float] = (1.0, 2.0, 3.0),
 ) -> dict:
     """
     fills — список (цена, размер) исполненных частей (часть 1/часть 2 из entry_engine).
@@ -36,13 +37,13 @@ def open_paper_position(
     stop_loss = calculate_stop_loss(
         avg_entry_price, direction, sl_method, atr_1h, atr_multiplier, fixed_percent
     )
-    take_profits = calculate_take_profits(avg_entry_price, stop_loss, direction, tp_split_preset)
+    take_profits = calculate_take_profits(avg_entry_price, stop_loss, direction, tp_split_preset, r_multiples)
 
     position_id = trading_storage.create_position(
         chat_id=chat_id, symbol=symbol, exchange=exchange, direction=direction,
         mode="paper", avg_entry_price=avg_entry_price, quantity=quantity, stop_loss=stop_loss,
         original_stop_loss=stop_loss, tp_split_preset=tp_split_preset,
-        breakeven_after_tp=breakeven_after_tp, atr_1h=atr_1h,
+        breakeven_after_tp=breakeven_after_tp, atr_1h=atr_1h, tp_r_multiples=r_multiples,
     )
 
     return {

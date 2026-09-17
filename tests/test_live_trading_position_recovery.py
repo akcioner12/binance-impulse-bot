@@ -1,5 +1,7 @@
 from datetime import datetime
 
+import pytest
+
 import trading_storage
 import position_manager
 import live_trading
@@ -79,6 +81,43 @@ def test_restore_open_positions_reconstructs_active_chandelier():
     assert state.chandelier.extreme_price == 70.0
     assert state.chandelier.stop_price == 95.0
     assert state.tp_hit_count == 3
+
+
+def test_restore_open_positions_uses_stored_tp_r_multiples():
+    """
+    Раздвинутая сетка TP для дампов (17.09.2026, DUMP_TP_R_MULTIPLES) должна
+    восстанавливаться из БД той же, что была при открытии -- иначе рестарт
+    бота молча откатывает уже открытую дамп-позицию на дефолтную сетку R=1/2/3.
+    """
+    trading_storage.create_position(
+        chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="long",
+        mode="paper", avg_entry_price=100.0, quantity=10.0, stop_loss=97.0,
+        original_stop_loss=97.0, tp_split_preset="equal", breakeven_after_tp=2, atr_1h=2.0,
+        tp_r_multiples=(1.5, 3.0, 5.0),
+    )
+
+    live_trading.restore_open_positions()
+
+    state = live_trading._open_positions["BTCUSDT"]["state"]
+    # R=3 (100-97) -> TP1=100+3*1.5=104.5, TP2=109, TP3=115
+    assert [tp["level"] for tp in state.take_profits] == pytest.approx([104.5, 109.0, 115.0])
+
+
+def test_restore_open_positions_defaults_tp_r_multiples_when_missing():
+    """Старые записи в БД (до 17.09.2026) не имеют tp_r_multiples -- откат на дефолт R=1/2/3."""
+    trading_storage.create_position(
+        chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="short",
+        mode="paper", avg_entry_price=100.0, quantity=10.0, stop_loss=103.0,
+        original_stop_loss=103.0, tp_split_preset="equal", breakeven_after_tp=2, atr_1h=2.0,
+    )
+    with trading_storage.get_conn() as conn:
+        conn.execute("UPDATE positions SET tp_r_multiples = NULL")
+        conn.commit()
+
+    live_trading.restore_open_positions()
+
+    state = live_trading._open_positions["BTCUSDT"]["state"]
+    assert [tp["level"] for tp in state.take_profits] == pytest.approx([97.0, 94.0, 91.0])
 
 
 def test_restore_open_positions_parses_opened_at():

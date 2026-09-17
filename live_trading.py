@@ -113,6 +113,19 @@ def _risk_percent_for_direction(direction: str) -> float:
     return PUMP_RISK_PERCENT if direction == "up" else DUMP_RISK_PERCENT
 
 
+# Находка 17.09.2026 (257 сделок, 2,5 мес.): раздвинутая сетка TP1-3 на
+# дампах (R=1.5/3/5 вместо 1/2/3, тот же сплит долей 15/20/25%) даёт +21%
+# PnL по дампам ($36792 против $30357 за период) -- эдж у дампов сильнее,
+# есть смысл давать прибыли бежать дальше. На пампах наоборот текущая
+# сетка (R=1/2/3) лучше. Применяется только к reversal-сетапам (fade).
+PUMP_TP_R_MULTIPLES = (1.0, 2.0, 3.0)
+DUMP_TP_R_MULTIPLES = (1.5, 3.0, 5.0)
+
+
+def _tp_r_multiples_for_direction(direction: str) -> tuple[float, float, float]:
+    return PUMP_TP_R_MULTIPLES if direction == "up" else DUMP_TP_R_MULTIPLES
+
+
 def _is_dump_anchor_stale(daily_candles: list[dict]) -> bool:
     """
     Смотрит на последние ~12 дневных свечей: где был максимум (пик) и был ли
@@ -418,8 +431,14 @@ def restore_open_positions() -> int:
     """
     restored = 0
     for row in trading_storage.get_all_open_positions():
+        tp_r_multiples_raw = row["tp_r_multiples"]
+        r_multiples = (
+            tuple(float(x) for x in tp_r_multiples_raw.split(","))
+            if tp_r_multiples_raw else (1.0, 2.0, 3.0)
+        )
         take_profits = position_manager.calculate_take_profits(
             row["avg_entry_price"], row["original_stop_loss"], row["direction"], row["tp_split_preset"],
+            r_multiples=r_multiples,
         )
         state = order_executor.OpenPositionState(
             position_id=row["id"], direction=row["direction"],
@@ -737,6 +756,7 @@ def _handle_part_fill(setup: dict, symbol: str, price: float) -> None:
         fills=fills, sl_method=profile["sl_method"], atr_1h=setup["atr_1h"],
         atr_multiplier=DEFAULT_ATR_MULTIPLIER, fixed_percent=profile["sl_fixed_percent"],
         tp_split_preset=profile["tp_split_preset"], breakeven_after_tp=profile["breakeven_after_tp"],
+        r_multiples=_tp_r_multiples_for_direction(setup["impulse_direction"]),
     )
     new_state = order_executor.OpenPositionState(
         position_id=result["position_id"], direction=direction,

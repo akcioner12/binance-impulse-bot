@@ -39,6 +39,25 @@ def test_create_position_stores_explicit_recovery_fields():
     assert position["atr_1h"] == 1.5
 
 
+def test_create_position_stores_tp_r_multiples_default():
+    position_id = trading_storage.create_position(
+        chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="short",
+        mode="paper", avg_entry_price=100.0, quantity=4.0, stop_loss=103.0,
+    )
+    position = trading_storage.get_position(position_id)
+    assert position["tp_r_multiples"] == "1.0,2.0,3.0"
+
+
+def test_create_position_stores_explicit_tp_r_multiples():
+    position_id = trading_storage.create_position(
+        chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="long",
+        mode="paper", avg_entry_price=100.0, quantity=4.0, stop_loss=97.0,
+        tp_r_multiples=(1.5, 3.0, 5.0),
+    )
+    position = trading_storage.get_position(position_id)
+    assert position["tp_r_multiples"] == "1.5,3.0,5.0"
+
+
 def test_update_position_progress_persists_tp_and_chandelier_state():
     position_id = trading_storage.create_position(
         chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="short",

@@ -39,3 +39,15 @@ def test_open_paper_position_single_fill():
     assert result["avg_entry_price"] == 3000.0
     assert result["stop_loss"] == pytest.approx(3120.0)  # 3000 * 1.04
     assert [tp["size_pct"] for tp in result["take_profits"]] == [40, 30, 20]
+
+
+def test_open_paper_position_uses_custom_r_multiples():
+    result = order_executor.open_paper_position(
+        chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="long",
+        fills=[(100.0, 2.0)],
+        sl_method="atr", atr_1h=2.0, atr_multiplier=1.5, fixed_percent=None,
+        tp_split_preset="equal", r_multiples=(1.5, 3.0, 5.0),
+    )
+
+    # entry=100, SL=100-1.5*2=97 -> R=3 -> TP1=104.5(1.5R), TP2=109(3R), TP3=115(5R)
+    assert [tp["level"] for tp in result["take_profits"]] == pytest.approx([104.5, 109.0, 115.0])

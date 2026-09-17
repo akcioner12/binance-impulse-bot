@@ -131,6 +131,7 @@ _POSITION_RECOVERY_COLUMNS = {
     "chandelier_active": "INTEGER NOT NULL DEFAULT 0",
     "chandelier_extreme_price": "REAL",
     "chandelier_stop_price": "REAL",
+    "tp_r_multiples": "TEXT",
 }
 
 
@@ -240,27 +241,30 @@ def create_position(
     tp_split_preset: str = "equal",
     breakeven_after_tp: int = 2,
     atr_1h: float | None = None,
+    tp_r_multiples: tuple[float, float, float] = (1.0, 2.0, 3.0),
 ) -> int:
     """
-    original_stop_loss/tp_split_preset/breakeven_after_tp/atr_1h -- снимок
-    параметров, нужный чтобы при рестарте бота восстановить open-позицию точно
-    в том же состоянии (см. live_trading.restore_open_positions). Если
+    original_stop_loss/tp_split_preset/breakeven_after_tp/atr_1h/tp_r_multiples --
+    снимок параметров, нужный чтобы при рестарте бота восстановить open-позицию
+    точно в том же состоянии (см. live_trading.restore_open_positions). Если
     original_stop_loss не передан -- берётся равным stop_loss на входе (совпадает,
     т.к. на момент создания позиции стоп ещё никуда не двигался).
     """
     if original_stop_loss is None:
         original_stop_loss = stop_loss
+    tp_r_multiples_str = ",".join(str(r) for r in tp_r_multiples)
     with get_conn() as conn:
         cursor = conn.execute("""
             INSERT INTO positions (
                 chat_id, symbol, exchange, direction, mode,
                 avg_entry_price, quantity, stop_loss,
                 original_stop_loss, tp_split_preset, breakeven_after_tp, atr_1h,
-                remaining_quantity
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                remaining_quantity, tp_r_multiples
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
         """, (
             chat_id, symbol, exchange, direction, mode, avg_entry_price, quantity, stop_loss,
             original_stop_loss, tp_split_preset, breakeven_after_tp, atr_1h, quantity,
+            tp_r_multiples_str,
         ))
         conn.commit()
         return cursor.lastrowid
