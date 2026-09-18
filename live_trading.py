@@ -269,9 +269,17 @@ async def execute_setup(
     )
 
 
+_FILL_STAGE_LABELS = {
+    "part1": "🔹 Часть 1 из 2\n\n",
+    "part2_merged": "🔹 Часть 2 из 2 (объединена с частью 1 — показан итоговый объём)\n\n",
+    "part2_independent": "🔹 Часть 2 из 2 (часть 1 уже закрыта — это отдельная позиция)\n\n",
+}
+
+
 def format_entry_report(symbol: str, exchange: str, snapshot: dict, also_on_bybit: bool = False) -> str:
     """Отчёт пользователю о факте входа в сделку -- цена, объём, SL, сетка TP."""
     direction_word = "🟢 LONG" if snapshot["direction"] == "long" else "🔴 SHORT"
+    fill_stage_line = _FILL_STAGE_LABELS.get(snapshot.get("fill_stage"), "")
     tp_lines = "\n".join(
         f"TP{idx}: `{tp['level']:.6g}` ({tp['size_pct']}%)"
         for idx, tp in enumerate(snapshot["take_profits"], start=1)
@@ -281,6 +289,7 @@ def format_entry_report(symbol: str, exchange: str, snapshot: dict, also_on_bybi
         link_line += f" | [Открыть на Bybit]({build_exchange_link('Bybit', symbol)})"
     return (
         f"✅ *Вход в сделку: {symbol}* [{exchange}]\n\n"
+        f"{fill_stage_line}"
         f"Направление: {direction_word}\n"
         f"Цена входа: `{snapshot['avg_entry_price']:.6g}`\n"
         f"Объём: `{snapshot['quantity']:.6g}`\n"
@@ -390,6 +399,7 @@ def get_position_snapshot(symbol: str) -> dict | None:
         "take_profits": [{"level": tp["level"], "size_pct": tp["size_pct"]} for tp in state.take_profits],
         "tp4_size_pct": 100 - tp3_total_pct,
         "risk_amount": state.quantity * abs(state.avg_entry_price - state.stop_loss),
+        "fill_stage": entry.get("fill_stage"),
     }
 
 
@@ -734,6 +744,7 @@ def _handle_part_fill(setup: dict, symbol: str, price: float) -> None:
     direction = position_manager.determine_trade_direction(setup["impulse_direction"], "reversal")
     existing = _open_positions.get(symbol)
     is_merge = existing is not None and not existing["state"].closed and existing["state"].tp_hit_count == 0
+    fill_stage = "part1" if existing is None else ("part2_merged" if is_merge else "part2_independent")
 
     if is_merge:
         old_state = existing["state"]
@@ -766,5 +777,6 @@ def _handle_part_fill(setup: dict, symbol: str, price: float) -> None:
     )
     _open_positions[symbol] = {
         "chat_id": setup["chat_id"], "state": new_state, "atr_1h": setup["atr_1h"], "opened_at": opened_at,
+        "fill_stage": fill_stage,
     }
     trading_storage.update_trade_signal_status(setup["signal_id"], "executed")
