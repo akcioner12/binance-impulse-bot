@@ -77,6 +77,19 @@ async def test_handle_new_impulse_none_when_symbol_blacklisted():
     assert result is None
 
 
+@pytest.mark.asyncio
+async def test_handle_new_impulse_none_when_symbol_blacklisted_second_batch():
+    """18.09.2026: расширение чёрного списка с 4 до 7 монет (ARXUSDT/BBUSDT/KAITOUSDT)."""
+    profile = {"is_active": 1, "max_concurrent_trades": 3}
+    for symbol in ("ARXUSDT", "BBUSDT", "KAITOUSDT"):
+        with patch("live_trading.trading_storage.get_profile", return_value=profile):
+            result = await live_trading.handle_new_impulse(
+                session=None, chat_id=111, symbol=symbol, exchange="Binance",
+                direction="up", current_price=100.0, window_start_price=70.0,
+            )
+        assert result is None, symbol
+
+
 PROFILE = {"is_active": 1, "max_concurrent_trades": 3}
 
 
