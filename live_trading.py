@@ -126,6 +126,16 @@ def _tp_r_multiples_for_direction(direction: str) -> tuple[float, float, float]:
     return PUMP_TP_R_MULTIPLES if direction == "up" else DUMP_TP_R_MULTIPLES
 
 
+# Чёрный список монет (18.09.2026): на бэктесте 2,5 мес. (725 сделок) эти 4
+# символа стабильно убыточны в ОБЕИХ половинах периода (01.07-10.08 и
+# 10.08-12.09) -- не разовая серия стопов, а устойчивый паттерн. Исключение
+# из торговли даёт +$3760.15 (+1.7%) к итоговому PnL за период. Остальные
+# кандидаты из топ-10 худших не включены -- либо недостаточно сделок в одной
+# из половин периода, либо (HANAUSDT) знак результата меняется между
+# половинами, то есть убыток был разовым, а не структурным.
+SYMBOL_BLACKLIST = {"CLOUSDT", "IDOLUSDT", "ZEREBROUSDT", "NIGHTUSDT"}
+
+
 def _is_dump_anchor_stale(daily_candles: list[dict]) -> bool:
     """
     Смотрит на последние ~12 дневных свечей: где был максимум (пик) и был ли
@@ -174,6 +184,8 @@ async def handle_new_impulse(
     """
     profile = trading_storage.get_profile(chat_id)
     if profile is None or not profile["is_active"]:
+        return None
+    if symbol in SYMBOL_BLACKLIST:
         return None
     if (
         symbol in _pending_setups or symbol in _open_positions
