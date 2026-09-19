@@ -159,6 +159,27 @@ async def send_text(session: aiohttp.ClientSession, chat_id: int, text: str):
     })
 
 
+async def send_document(
+    session: aiohttp.ClientSession, chat_id: int, filename: str, content: bytes, caption: str | None = None
+) -> bool:
+    """Отправляет HTML-файл документом (multipart -- _api_call шлёт только JSON)."""
+    form = aiohttp.FormData()
+    form.add_field("chat_id", str(chat_id))
+    if caption:
+        form.add_field("caption", caption)
+    form.add_field("document", content, filename=filename, content_type="text/html")
+    try:
+        async with session.post(f"{TG_API}/sendDocument", data=form) as resp:
+            data = await resp.json()
+    except Exception as e:
+        logger.error(f"Ошибка вызова Telegram API (sendDocument): {e}")
+        return False
+    if not data.get("ok"):
+        logger.error(f"Telegram API error (sendDocument): {data}")
+        return False
+    return True
+
+
 async def send_text_with_keyboard(
     session: aiohttp.ClientSession, chat_id: int, text: str, keyboard: list[list[dict]]
 ) -> dict | None:

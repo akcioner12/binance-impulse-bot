@@ -8,6 +8,7 @@
 """
 
 import logging
+from datetime import datetime, timezone
 
 from storage import get_conn
 from crypto_utils import encrypt_secret, decrypt_secret
@@ -187,6 +188,16 @@ def init_paper_trading_db():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        conn.execute("""
+            CREATE TABLE IF NOT EXISTS trade_events (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                event TEXT NOT NULL,
+                pnl REAL NOT NULL,
+                ts TEXT NOT NULL
+            )
+        """)
         conn.commit()
     logger.info("Таблицы paper-trading инициализированы")
 
@@ -332,6 +343,49 @@ def close_position(position_id: int, realized_pnl: float):
             (realized_pnl, position_id),
         )
         conn.commit()
+
+
+def record_trade_event(chat_id: int, symbol: str, event: str, pnl: float, ts: str | None = None):
+    """
+    Событие сделки (tp1/tp2/tp3_hit, closed_*) с PnL ноги -- источник для
+    журнала сделок (trading_journal_report). Логи Railway хранятся ~неделю,
+    БД -- постоянно.
+    """
+    if ts is None:
+        ts = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M:%S")
+    with get_conn() as conn:
+        conn.execute(
+            "INSERT INTO trade_events (chat_id, symbol, event, pnl, ts) VALUES (?, ?, ?, ?, ?)",
+            (chat_id, symbol, event, pnl, ts),
+        )
+        conn.commit()
+
+
+def get_trade_events(chat_id: int) -> list[dict]:
+    with get_conn() as conn:
+        rows = conn.execute(
+            "SELECT ts, symbol, event, pnl FROM trade_events WHERE chat_id = ? ORDER BY ts, id",
+            (chat_id,),
+        ).fetchall()
+        return [dict(row) for row in rows]
+
+
+def seed_trade_events_if_empty(chat_id: int, rows: list[tuple]) -> int:
+    """
+    Разовая загрузка истории событий (собранной из логов до появления таблицы).
+    Срабатывает только пока у chat_id нет ни одного события -- повторные
+    рестарты бота ничего не дублируют. Возвращает число добавленных строк.
+    """
+    with get_conn() as conn:
+        exists = conn.execute("SELECT 1 FROM trade_events WHERE chat_id = ? LIMIT 1", (chat_id,)).fetchone()
+        if exists:
+            return 0
+        conn.executemany(
+            "INSERT INTO trade_events (chat_id, symbol, event, pnl, ts) VALUES (?, ?, ?, ?, ?)",
+            [(chat_id, symbol, event, pnl, ts) for ts, symbol, event, pnl in rows],
+        )
+        conn.commit()
+        return len(rows)
 
 
 def create_trade_signal(

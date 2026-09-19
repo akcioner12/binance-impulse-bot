@@ -33,9 +33,9 @@ from bybit_collector import stream_bybit_symbols
 from notifier import broadcast_signal, send_text, set_bot_commands
 from commands import run_command_listener
 from daily_report import daily_report_loop
-from trading_daily_report import trading_daily_report_loop
+from trading_journal_report import trading_journal_report_loop, load_seed_events
 from storage import init_db, get_all_subscribers, upsert_alert_state, clear_alert_state, get_alert_state, get_all_active_symbols
-from trading_storage import init_trading_db, init_paper_trading_db, expire_all_pending_signals
+from trading_storage import init_trading_db, init_paper_trading_db, expire_all_pending_signals, seed_trade_events_if_empty
 import live_trading
 import impulse_analysis
 import market_data
@@ -364,6 +364,9 @@ async def main():
     init_db()
     init_trading_db()
     init_paper_trading_db()
+    seeded = seed_trade_events_if_empty(ADMIN_CHAT_ID, load_seed_events())
+    if seeded:
+        logger.info(f"Загружена история событий автотрейдинга в trade_events: {seeded} строк")
 
     logger.info("Загружаю начальные списки торгуемых пар с Binance и Bybit...")
 
@@ -392,7 +395,7 @@ async def main():
             collectors_supervisor(),
             run_command_listener(cmd_session),
             daily_report_loop(get_symbols_for_report, get_all_subscribers),
-            trading_daily_report_loop(ADMIN_CHAT_ID),
+            trading_journal_report_loop(ADMIN_CHAT_ID),
         )
 
 

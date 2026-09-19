@@ -614,6 +614,14 @@ def _check_pump_stuck_timeout(entry: dict, price: float) -> dict | None:
     return {"event": "closed_timeout_24h", "pnl_delta": pnl, "exit_price": price}
 
 
+def _record_trade_event(chat_id: int, symbol: str, event: str, pnl: float):
+    """Пишет событие в БД для журнала сделок; сбой записи не должен ломать торговлю."""
+    try:
+        trading_storage.record_trade_event(chat_id, symbol, event, pnl)
+    except Exception:
+        logger.exception(f"Автотрейдинг [{symbol}]: не удалось записать событие {event} в trade_events")
+
+
 def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
     entry = _open_positions[symbol]
     state = entry["state"]
@@ -630,6 +638,7 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
             f"Автотрейдинг [{symbol}]: {timeout_event['event']}, "
             f"цена={timeout_event['exit_price']:.6g}, pnl={timeout_event['pnl_delta']:+.2f}"
         )
+        _record_trade_event(chat_id, symbol, timeout_event["event"], timeout_event["pnl_delta"])
         if state.tp_hit_count == 0:
             pending = _pending_setups.get(symbol)
             if pending is not None:
@@ -647,6 +656,7 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
             f"Автотрейдинг [{symbol}]: {stop_event['event']}, "
             f"цена={stop_event['exit_price']:.6g}, pnl={stop_event['pnl_delta']:+.2f}"
         )
+        _record_trade_event(chat_id, symbol, stop_event["event"], stop_event["pnl_delta"])
         if state.tp_hit_count == 0:
             # Тезис на разворот опровергнут рынком (ни один TP не взят до стопа) --
             # если вторая часть входа ещё не сработала, отменяем её (см.
@@ -667,6 +677,7 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
                 f"Автотрейдинг [{symbol}]: {event['event']}, "
                 f"цена={event['exit_price']:.6g}, pnl={event['pnl_delta']:+.2f}"
             )
+            _record_trade_event(chat_id, symbol, event["event"], event["pnl_delta"])
         elif event["event"] == "moved_to_breakeven":
             trading_storage.update_position_stop_loss(state.position_id, event["new_stop_loss"])
             _queue_notification(chat_id, _format_breakeven_report(symbol, event))

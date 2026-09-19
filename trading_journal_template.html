@@ -1,0 +1,364 @@
+<title>Живой журнал автотрейдинга</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans:wght@400;500;600;700&family=IBM+Plex+Mono:wght@400;500;600&display=swap" rel="stylesheet">
+<style>
+  :root {
+    --bg: #eef1f4;
+    --surface: #ffffff;
+    --surface-2: #f6f8fa;
+    --border: #dde3e9;
+    --ink: #131c24;
+    --ink-muted: #5c6b78;
+    --ink-faint: #8b97a3;
+    --accent: #0f6e6e;
+    --accent-ink: #ffffff;
+    --pos: #0a7d42;
+    --pos-bg: #e6f4ec;
+    --neg: #b23a3a;
+    --neg-bg: #fbeaea;
+    --open: #9a6a08;
+    --open-bg: #fbf1de;
+    --font-sans: 'IBM Plex Sans', -apple-system, 'Segoe UI', sans-serif;
+    --font-mono: 'IBM Plex Mono', ui-monospace, 'SFMono-Regular', Consolas, monospace;
+    padding-top: env(safe-area-inset-top, 0px);
+    padding-bottom: env(safe-area-inset-bottom, 0px);
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root:not([data-theme="light"]) {
+      --bg: #0f1417;
+      --surface: #161d22;
+      --surface-2: #131a1f;
+      --border: #26323a;
+      --ink: #e7edf1;
+      --ink-muted: #93a4ae;
+      --ink-faint: #62727c;
+      --accent: #2fd4c0;
+      --accent-ink: #082421;
+      --pos: #3fd07e;
+      --pos-bg: #10291c;
+      --neg: #f17a72;
+      --neg-bg: #2c1516;
+      --open: #e5b155;
+      --open-bg: #2b2213;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --bg: #0f1417;
+    --surface: #161d22;
+    --surface-2: #131a1f;
+    --border: #26323a;
+    --ink: #e7edf1;
+    --ink-muted: #93a4ae;
+    --ink-faint: #62727c;
+    --accent: #2fd4c0;
+    --accent-ink: #082421;
+    --pos: #3fd07e;
+    --pos-bg: #10291c;
+    --neg: #f17a72;
+    --neg-bg: #2c1516;
+    --open: #e5b155;
+    --open-bg: #2b2213;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--bg);
+    color: var(--ink);
+    font-family: var(--font-sans);
+    padding-inline: 20px;
+    padding-block: 28px 48px;
+  }
+
+  .wrap { max-width: 1080px; margin: 0 auto; display: flex; flex-direction: column; gap: 28px; }
+
+  header.page {
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+  }
+
+  .eyebrow {
+    font-family: var(--font-mono);
+    font-size: 12px;
+    letter-spacing: 0.08em;
+    text-transform: uppercase;
+    color: var(--accent);
+    font-weight: 600;
+  }
+
+  h1 {
+    margin: 0;
+    font-size: 26px;
+    font-weight: 700;
+    text-wrap: balance;
+    letter-spacing: -0.01em;
+  }
+
+  .meta-line {
+    font-size: 13px;
+    color: var(--ink-muted);
+    line-height: 1.6;
+  }
+
+  .meta-line b { color: var(--ink); font-weight: 600; }
+
+  .note {
+    font-size: 13px;
+    color: var(--ink-muted);
+    background: var(--surface-2);
+    border: 1px solid var(--border);
+    border-radius: 10px;
+    padding: 12px 14px;
+    line-height: 1.55;
+  }
+
+  .note b { color: var(--ink); }
+
+  section.period {
+    display: flex;
+    flex-direction: column;
+    gap: 14px;
+  }
+
+  .period-head {
+    display: flex;
+    align-items: baseline;
+    justify-content: space-between;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+
+  .period-title {
+    font-size: 18px;
+    font-weight: 700;
+  }
+
+  .period-sub {
+    font-size: 12.5px;
+    color: var(--ink-faint);
+    font-family: var(--font-mono);
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+    gap: 1px;
+    background: var(--border);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    overflow: hidden;
+  }
+
+  .stat {
+    background: var(--surface);
+    padding: 12px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+  }
+
+  .stat .label {
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.06em;
+    color: var(--ink-faint);
+    font-weight: 600;
+  }
+
+  .stat .value {
+    font-family: var(--font-mono);
+    font-size: 21px;
+    font-weight: 600;
+    font-variant-numeric: tabular-nums;
+  }
+
+  .stat .value.pos { color: var(--pos); }
+  .stat .value.neg { color: var(--neg); }
+
+  .table-scroll {
+    overflow-x: auto;
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    background: var(--surface);
+  }
+
+  table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+    min-width: 720px;
+  }
+
+  thead th {
+    position: sticky;
+    top: env(safe-area-inset-top, 0px);
+    background: var(--surface-2);
+    text-align: left;
+    font-size: 11px;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--ink-faint);
+    font-weight: 600;
+    padding: 10px 14px;
+    border-bottom: 1px solid var(--border);
+    white-space: nowrap;
+  }
+
+  th.num, td.num { text-align: right; }
+
+  tbody td {
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--border);
+    font-family: var(--font-mono);
+    white-space: nowrap;
+    color: var(--ink);
+  }
+
+  tbody tr:last-child td { border-bottom: none; }
+
+  tbody tr.loss { background: var(--neg-bg); }
+  tbody tr.win { background: var(--pos-bg); }
+
+  .idx { color: var(--ink-faint); font-size: 12px; }
+
+  .symbol { font-weight: 600; letter-spacing: -0.01em; }
+
+  .dash { color: var(--ink-faint); }
+
+  .pnl { font-weight: 600; font-variant-numeric: tabular-nums; }
+  .pnl.pos { color: var(--pos); }
+  .pnl.neg { color: var(--neg); }
+
+  .badge {
+    display: inline-block;
+    font-family: var(--font-sans);
+    font-size: 11px;
+    font-weight: 600;
+    padding: 2px 8px;
+    border-radius: 999px;
+  }
+  .badge.stop { background: var(--neg-bg); color: var(--neg); }
+  .badge.trail { background: var(--pos-bg); color: var(--pos); }
+  .badge.timeout { background: var(--surface-2); color: var(--ink-muted); }
+  .badge.open { background: var(--open-bg); color: var(--open); }
+
+  footer {
+    font-size: 12px;
+    color: var(--ink-faint);
+    text-align: center;
+    padding-top: 8px;
+  }
+
+  @media (max-width: 480px) {
+    h1 { font-size: 22px; }
+    .stat .value { font-size: 18px; }
+  }
+</style>
+
+<div class="wrap">
+  <header class="page">
+    <div class="eyebrow">Volume Exchange Bot · Автотрейдинг</div>
+    <h1>Живой журнал сделок</h1>
+    <div class="meta-line">Данные из логов Railway (события TP/стоп/трейлинг), собрано на <b id="generatedAt"></b></div>
+  </header>
+
+  <div class="note">
+    <b>Важно:</b> в проде логируются только события ВЫХОДА (TP1-3, стоп, трейлинг-закрытие) — момент входа в сделку нигде не пишется в лог. Первая колонка с датой в каждой строке — это время ПЕРВОГО известного события по позиции (обычно TP1 или стоп), не факт открытия сделки. Позиции без строки "выход" — ещё открыты на момент сборки отчёта.
+  </div>
+
+  <section class="period" id="section-24h">
+    <div class="period-head">
+      <div class="period-title">Последние 24 часа</div>
+      <div class="period-sub" id="sub24h"></div>
+    </div>
+    <div class="stats" id="stats-24h"></div>
+    <div class="table-scroll"><table id="table-24h"></table></div>
+  </section>
+
+  <section class="period" id="section-full">
+    <div class="period-head">
+      <div class="period-title">С обнуления баланса</div>
+      <div class="period-sub" id="subFull"></div>
+    </div>
+    <div class="stats" id="stats-full"></div>
+    <div class="table-scroll"><table id="table-full"></table></div>
+  </section>
+
+  <footer>Обнуление баланса: __RESET_AT__ · $10 000 старт</footer>
+</div>
+
+<script>
+const DATA = __DATA_JSON__;
+
+function fmtPnl(v) {
+  const sign = v >= 0 ? '+' : '';
+  return sign + v.toFixed(2);
+}
+
+function badgeFor(p) {
+  if (p.open) return '<span class="badge open">ОТКРЫТА</span>';
+  if (p.exit_type === 'Стоп') return '<span class="badge stop">Стоп</span>';
+  if (p.exit_type === 'Трейлинг (TP4)') return '<span class="badge trail">Трейлинг (TP4)</span>';
+  return '<span class="badge timeout">' + p.exit_type + '</span>';
+}
+
+function cell(v) {
+  return v ? v : '<span class="dash">—</span>';
+}
+
+function renderTable(el, positions) {
+  let rows = positions.map((p, i) => {
+    const cls = p.open ? '' : (p.pnl > 0 ? 'win' : 'loss');
+    return `<tr class="${cls}">
+      <td class="idx num">${i + 1}</td>
+      <td class="symbol">${p.symbol}</td>
+      <td>${cell(p.tp1)}</td>
+      <td>${cell(p.tp2)}</td>
+      <td>${cell(p.tp3)}</td>
+      <td>${cell(p.exit_ts)}</td>
+      <td>${badgeFor(p)}</td>
+      <td class="pnl num ${p.pnl >= 0 ? 'pos' : 'neg'}">${fmtPnl(p.pnl)}</td>
+    </tr>`;
+  }).join('');
+
+  el.innerHTML = `<thead><tr>
+    <th class="num">#</th>
+    <th>Монета</th>
+    <th>TP1</th>
+    <th>TP2</th>
+    <th>TP3</th>
+    <th>Выход</th>
+    <th>Статус</th>
+    <th class="num">PnL, $</th>
+  </tr></thead><tbody>${rows}</tbody>`;
+}
+
+function renderStats(el, s) {
+  const items = [
+    ['Позиций', s.count, ''],
+    ['Закрыто', s.closed, ''],
+    ['Ещё открыто', s.open, ''],
+    ['Winrate закрытых', s.winrate.toFixed(1) + '%', ''],
+    ['Плюс / минус', s.wins + ' / ' + s.losses, ''],
+    ['Суммарный PnL', fmtPnl(s.total_pnl), s.total_pnl >= 0 ? 'pos' : 'neg'],
+  ];
+  el.innerHTML = items.map(([label, value, cls]) =>
+    `<div class="stat"><div class="label">${label}</div><div class="value ${cls}">${value}</div></div>`
+  ).join('');
+}
+
+document.getElementById('generatedAt').textContent = DATA.generated_at;
+document.getElementById('sub24h').textContent = 'от ' + DATA.last24h.cutoff + ' до ' + DATA.generated_at;
+document.getElementById('subFull').textContent = 'от ' + DATA.reset_at + ' до ' + DATA.generated_at;
+
+renderStats(document.getElementById('stats-24h'), DATA.last24h.summary);
+renderTable(document.getElementById('table-24h'), DATA.last24h.positions);
+
+renderStats(document.getElementById('stats-full'), DATA.full.summary);
+renderTable(document.getElementById('table-full'), DATA.full.positions);
+</script>
