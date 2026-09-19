@@ -29,6 +29,9 @@ def _make_short_position(opened_hours_ago: float, tp_hit_count: int = 0):
     state.tp_hit_count = tp_hit_count
     if tp_hit_count >= 1:
         state.remaining_quantity = 3.0
+        state.take_profits[0]["filled"] = True  # конструктор OpenPositionState сбрасывает filled -> True выставляем вручную
+    if tp_hit_count >= 2:
+        state.take_profits[1]["filled"] = True
     opened_at = datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=opened_hours_ago)
     live_trading._open_positions["BTCUSDT"] = {
         "chat_id": 111, "state": state, "atr_1h": 2.0, "opened_at": opened_at,
@@ -59,6 +62,13 @@ def test_pump_force_closed_after_24h_with_one_tp():
         events = live_trading.handle_price_tick("BTCUSDT", price=95.0)
 
     assert events == ["closed_timeout_24h"]
+
+    # TP1 (short, 90) уже зафиксировал 1.0*(100-90)=+10.00; закрытие остатка
+    # по таймауту 3.0*(100-95)=+15.00 -> итог по сделке +25.00. Уведомление
+    # должно показывать оба числа, не только ногу закрытия (прод-вопрос 19.09.2026).
+    notes = live_trading.pop_notifications()
+    assert "+15.00" in notes[0]["text"]
+    assert "+25.00" in notes[0]["text"]
 
 
 def test_pump_not_closed_before_24h():

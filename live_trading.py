@@ -553,7 +553,24 @@ def _format_chandelier_activated_report(symbol: str, state: order_executor.OpenP
     )
 
 
-def _format_close_report(symbol: str, event: dict) -> str:
+def _realized_pnl_so_far(state: order_executor.OpenPositionState) -> float:
+    """
+    Сумма PnL уже зафиксированных тейков (TP1-3) этой позиции, БЕЗ учёта
+    текущего закрытия. Нужна, чтобы в уведомлении о закрытии (стоп/трейлинг/
+    таймаут) показать итог по ВСЕЙ сделке, а не только по последней ноге --
+    прод-вопрос 19.09.2026: после TP1 позиция остаётся на исходном стопе
+    (перенос в безубыток+ только после TP2), поэтому закрытие остатка может
+    показывать убыток на своей ноге, хотя сделка целиком в плюсе.
+    """
+    total = 0.0
+    for tp in state.take_profits:
+        if tp["filled"]:
+            size = state.quantity * (tp["size_pct"] / 100)
+            total += order_executor.calculate_position_pnl(state.direction, state.avg_entry_price, tp["level"], size)
+    return total
+
+
+def _format_close_report(symbol: str, event: dict, total_pnl: float) -> str:
     is_chandelier = event["event"] == "closed_chandelier"
     header = "Сделка закрыта трейлингом TP4" if is_chandelier else "Стоп сработал"
     icon = "🏁" if is_chandelier else "🛑"
@@ -561,15 +578,17 @@ def _format_close_report(symbol: str, event: dict) -> str:
         f"{icon} *{header}: {symbol}*\n\n"
         f"Цена закрытия: `{event['exit_price']:.6g}`\n"
         f"PnL: `{event['pnl_delta']:+.2f}`\n"
+        f"PnL по сделке целиком: `{total_pnl:+.2f}`\n"
         f"Позиция полностью закрыта"
     )
 
 
-def _format_timeout_report(symbol: str, event: dict) -> str:
+def _format_timeout_report(symbol: str, event: dict, total_pnl: float) -> str:
     return (
         f"⏱ *Закрыто по таймауту {PUMP_STUCK_TIMEOUT_HOURS}ч: {symbol}*\n\n"
         f"Цена закрытия: `{event['exit_price']:.6g}`\n"
         f"PnL: `{event['pnl_delta']:+.2f}`\n"
+        f"PnL по сделке целиком: `{total_pnl:+.2f}`\n"
         f"Памп простоял {PUMP_STUCK_TIMEOUT_HOURS}ч без реального прогресса "
         f"(максимум 1 тейк) — закрыто принудительно по рынку"
     )
@@ -603,9 +622,10 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
 
     timeout_event = _check_pump_stuck_timeout(entry, price)
     if timeout_event is not None:
+        total_pnl = _realized_pnl_so_far(state) + timeout_event["pnl_delta"]
         trading_storage.adjust_paper_balance(chat_id, timeout_event["pnl_delta"])
         trading_storage.close_position(state.position_id, realized_pnl=timeout_event["pnl_delta"])
-        _queue_notification(chat_id, _format_timeout_report(symbol, timeout_event))
+        _queue_notification(chat_id, _format_timeout_report(symbol, timeout_event, total_pnl))
         logger.info(
             f"Автотрейдинг [{symbol}]: {timeout_event['event']}, "
             f"цена={timeout_event['exit_price']:.6g}, pnl={timeout_event['pnl_delta']:+.2f}"
@@ -619,9 +639,10 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
 
     stop_event = order_executor.check_stop_hit(state, price, entry["atr_1h"])
     if stop_event is not None:
+        total_pnl = _realized_pnl_so_far(state) + stop_event["pnl_delta"]
         trading_storage.adjust_paper_balance(chat_id, stop_event["pnl_delta"])
         trading_storage.close_position(state.position_id, realized_pnl=stop_event["pnl_delta"])
-        _queue_notification(chat_id, _format_close_report(symbol, stop_event))
+        _queue_notification(chat_id, _format_close_report(symbol, stop_event, total_pnl))
         logger.info(
             f"Автотрейдинг [{symbol}]: {stop_event['event']}, "
             f"цена={stop_event['exit_price']:.6g}, pnl={stop_event['pnl_delta']:+.2f}"

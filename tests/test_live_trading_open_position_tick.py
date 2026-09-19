@@ -59,6 +59,30 @@ def test_tick_stop_loss_hit_closes_position_and_removes_from_state():
     assert "-16.00" in notes[0]["text"]
 
 
+def test_tick_stop_loss_after_tp1_shows_total_position_pnl():
+    """
+    Прод-вопрос 19.09.2026 (ONEUSDT): после TP1 позиция остаётся на исходном
+    стопе (перенос в безубыток+ только после TP2) -- закрытие остатка по
+    стопу/таймауту может показывать убыток по СВОЕЙ ноге, хотя вся сделка
+    целиком в плюсе за счёт уже зафиксированного TP1. Уведомление о закрытии
+    должно явно показывать итог по всей сделке, а не только по этой ноге.
+    """
+    _make_open_position()
+    with patch("live_trading.trading_storage.adjust_paper_balance"), \
+         patch("live_trading.trading_storage.update_position_progress"):
+        live_trading.handle_price_tick("BTCUSDT", price=110.0)  # TP1: 1.0*(110-100) = +10.00
+    live_trading._notification_queue.clear()
+
+    with patch("live_trading.trading_storage.adjust_paper_balance"), \
+         patch("live_trading.trading_storage.close_position"):
+        live_trading.handle_price_tick("BTCUSDT", price=96.0)  # стоп остатка: 3.0*(96-100) = -12.00
+
+    notes = live_trading.pop_notifications()
+    text = notes[0]["text"]
+    assert "-12.00" in text  # PnL этой ноги (закрытия)
+    assert "-2.00" in text  # PnL по сделке целиком: 10.00 + (-12.00)
+
+
 def test_tick_moved_to_breakeven_updates_db_stop_loss():
     state = _make_open_position()
     state.take_profits[0]["filled"] = True  # TP1 уже сработал ранее
@@ -198,3 +222,5 @@ def test_tick_closed_chandelier_notifies_full_close():
     notes = live_trading.pop_notifications()
     assert len(notes) == 1
     assert "трейлинг" in notes[0]["text"].lower() or "TP4" in notes[0]["text"]
+    # TP1=10 + TP2=20 + TP3=30 (все по 1.0*(level-100)) + трейлинг-нога 1.0*(129-100)=29 -> итого 89.00
+    assert "89.00" in notes[0]["text"]
