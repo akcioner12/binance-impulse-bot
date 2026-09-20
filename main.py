@@ -62,6 +62,18 @@ _tick_count = 0                          # диагностика: общее ч
 _last_tick_log_time = 0.0
 _seen_symbols: set[str] = set()         # диагностика: подтверждение первого тика по каждому символу
 
+# После запуска (деплой/рестарт) детекторы теряют память о том, что уже сигналили
+# по монетам, давно идущим в импульсе, и на первых же тиках выдают пачку "новых"
+# сигналов по старым движениям (20.09.2026: 8-13 сетапов за секунды, риск 4% каждый).
+# Первые STARTUP_GRACE_SECONDS детекторы только "вспоминают" текущие импульсы (состояние
+# у них обновляется как обычно), но автотрейдинг по этим сигналам не запускается.
+STARTUP_GRACE_SECONDS = 240  # ~40с уходит на загрузку истории и подключение WS, ещё ~минута на первые тики всех пар
+_started_at_monotonic: float | None = None
+
+
+def _in_startup_grace() -> bool:
+    return _started_at_monotonic is not None and time.monotonic() - _started_at_monotonic < STARTUP_GRACE_SECONDS
+
 
 async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
     """Вызывается коллектором (любой биржи) при закрытии каждой минутной свечи."""
@@ -97,10 +109,13 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
 
     dump_signal = dump_tracker.update(symbol, exchange, price, ts)
     if dump_signal is not None and dump_signal.level == IMPULSE_START_THRESHOLD:
-        asyncio.create_task(_run_autotrading_for_admin(
-            dump_signal.symbol, dump_signal.exchange, dump_signal.direction,
-            dump_signal.current_price, dump_signal.window_start_price,
-        ))
+        if _in_startup_grace():
+            logger.info(f"Автотрейдинг [{dump_signal.symbol}]: дамп уже шёл до запуска, сигнал подавлен (тихий режим после старта)")
+        else:
+            asyncio.create_task(_run_autotrading_for_admin(
+                dump_signal.symbol, dump_signal.exchange, dump_signal.direction,
+                dump_signal.current_price, dump_signal.window_start_price,
+            ))
 
     if signal is None:
         if not tracker.is_active(symbol) and get_alert_state(symbol):
@@ -116,10 +131,13 @@ async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
     )
 
     if signal.level == IMPULSE_START_THRESHOLD and signal.direction == "up":
-        asyncio.create_task(_run_autotrading_for_admin(
-            signal.symbol, signal.exchange, signal.direction,
-            signal.current_price, signal.window_start_price,
-        ))
+        if _in_startup_grace():
+            logger.info(f"Автотрейдинг [{signal.symbol}]: памп уже шёл до запуска, сигнал подавлен (тихий режим после старта)")
+        else:
+            asyncio.create_task(_run_autotrading_for_admin(
+                signal.symbol, signal.exchange, signal.direction,
+                signal.current_price, signal.window_start_price,
+            ))
 
     subscribers = get_all_subscribers()
     if not subscribers:
@@ -388,6 +406,9 @@ async def main():
     if restored_positions:
         logger.info(f"Восстановлено {restored_positions} открытых позиций автотрейдинга из БД")
     expire_all_pending_signals()
+
+    global _started_at_monotonic
+    _started_at_monotonic = time.monotonic()
 
     async with aiohttp.ClientSession() as cmd_session:
         await set_bot_commands(cmd_session, ADMIN_CHAT_ID)
