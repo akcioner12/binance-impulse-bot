@@ -80,17 +80,50 @@ def _summarize(positions: list[dict]) -> dict:
     }
 
 
+def _event_stats(events: list[dict]) -> dict:
+    """Каждая нога -- отдельное событие: TP1/TP2/TP3, TP4 (закрытие трейлингом), стоп, таймаут."""
+    def agg(names) -> dict:
+        x = [e for e in events if e["event"] in names]
+        return {"n": len(x), "sum": round(sum(e["pnl"] for e in x), 2)}
+
+    return {
+        "tp1": agg({"tp1_hit"}), "tp2": agg({"tp2_hit"}), "tp3": agg({"tp3_hit"}),
+        "tp4": agg({"closed_chandelier"}),
+        "tp_all": agg({"tp1_hit", "tp2_hit", "tp3_hit", "closed_chandelier"}),
+        "stop": agg({"closed_stop_loss"}), "timeout": agg({"closed_timeout_24h"}),
+    }
+
+
+def _exit_stats(closed: list[dict]) -> dict:
+    """Закрытые сделки по способу выхода; PnL -- по сделке целиком (все ноги)."""
+    def block(kind: str) -> dict:
+        x = [p for p in closed if p["exit_type"] == kind]
+        return {"n": len(x), "sum": round(sum(p["pnl"] for p in x), 2), "wins": sum(1 for p in x if p["pnl"] > 0)}
+
+    stop = block("closed_stop_loss")
+    stops = [p for p in closed if p["exit_type"] == "closed_stop_loss"]
+    without_tp = sum(1 for p in stops if p["tp1"] is None and p["tp2"] is None and p["tp3"] is None)
+    stop.update({"without_tp": without_tp, "after_tp": len(stops) - without_tp})
+    return {"stop": stop, "trail": block("closed_chandelier"), "timeout": block("closed_timeout_24h")}
+
+
 def build_journal_data(events: list[dict], now: datetime, reset_at: str) -> dict:
     positions = _group_positions(events)
     cutoff = now - timedelta(hours=24)
+    cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
     recent = [p for p in positions if any(t >= cutoff for t in p["events"])]
     return {
         "generated_at": now.strftime("%d.%m.%Y %H:%M UTC"),
         "reset_at": reset_at,
-        "full": {"summary": _summarize(positions), "positions": [_position_row(p) for p in positions]},
+        "full": {
+            "summary": _summarize(positions), "positions": [_position_row(p) for p in positions],
+            "events": _event_stats(events), "exits": _exit_stats([p for p in positions if p["exit_ts"]]),
+        },
         "last24h": {
             "summary": _summarize(recent), "positions": [_position_row(p) for p in recent],
             "cutoff": cutoff.strftime("%d.%m %H:%M UTC"),
+            "events": _event_stats([e for e in events if e["ts"] >= cutoff_str]),
+            "exits": _exit_stats([p for p in positions if p["exit_ts"] and p["exit_ts"] >= cutoff]),
         },
     }
 
@@ -104,19 +137,20 @@ def render_journal_html(data: dict) -> str:
 
 
 def format_summary(data: dict, balance: float, unrealized: float = 0.0, open_count: int = 0) -> str:
-    def block(title: str, s: dict) -> str:
+    def block(title: str, s: dict, ev: dict) -> str:
         return (
             f"*{title}*\n"
             f"Сделок: {s['count']} (закрыто {s['closed']}, открыто {s['open']})\n"
             f"Прибыльных {s['wins']} / убыточных {s['losses']} — winrate {s['winrate']:.0f}%\n"
+            f"Ноги take profit: {ev['tp_all']['n']} ({ev['tp_all']['sum']:+.2f}) · Стопы: {ev['stop']['n']} ({ev['stop']['sum']:+.2f})\n"
             f"PnL: {s['total_pnl']:+.2f} USDT"
         )
 
     equity = balance + unrealized
     return (
         f"📒 *Живой журнал автотрейдинга* — {data['generated_at']}\n\n"
-        + block(f"С обнуления баланса — {data['reset_at']}", data["full"]["summary"]) + "\n\n"
-        + block("Последние 24 часа", data["last24h"]["summary"]) + "\n\n"
+        + block(f"С обнуления баланса — {data['reset_at']}", data["full"]["summary"], data["full"]["events"]) + "\n\n"
+        + block("Последние 24 часа", data["last24h"]["summary"], data["last24h"]["events"]) + "\n\n"
         + f"Баланс (только закрытые части сделок): {balance:.2f} USDT\n"
         + f"Нереализованный PnL по открытым ({open_count}): {unrealized:+.2f} USDT\n"
         + f"*Эквити: {equity:.2f} USDT ({(equity / START_BALANCE - 1) * 100:+.1f}% к {START_BALANCE:.0f})*\n"

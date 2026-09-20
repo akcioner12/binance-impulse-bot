@@ -137,3 +137,52 @@ async def test_build_and_send_sends_summary_then_html_document():
     assert mock_doc.await_args.args[1] == 111
     assert mock_doc.await_args.args[2].endswith(".html")
     assert b"AAAUSDT" in mock_doc.await_args.args[3]
+
+
+def test_events_block_counts_every_tp_leg_and_stops_with_sums():
+    """TP1, TP2, TP3 и TP4 (трейлинг) -- отдельные ноги; 'все TP' = сумма ног, стоп -- закрытие остатка."""
+    data = tjr.build_journal_data(_events(), NOW, reset_at="x")
+
+    ev = data["full"]["events"]
+    assert ev["tp1"] == {"n": 2, "sum": 20.0}
+    assert ev["tp2"] == {"n": 1, "sum": 20.0}
+    assert ev["tp3"] == {"n": 0, "sum": 0.0}
+    assert ev["tp4"] == {"n": 1, "sum": 5.0}
+    assert ev["tp_all"] == {"n": 4, "sum": 45.0}
+    assert ev["stop"] == {"n": 1, "sum": -20.0}
+    assert ev["timeout"] == {"n": 0, "sum": 0.0}
+
+
+def test_events_block_for_last24h_uses_only_events_inside_window():
+    data = tjr.build_journal_data(_events(), NOW, reset_at="x")
+
+    ev = data["last24h"]["events"]  # окно: 18.09 12:00 -- 19.09 12:00
+    assert ev["tp_all"] == {"n": 1, "sum": 10.0}   # только CCC tp1
+    assert ev["stop"] == {"n": 1, "sum": -20.0}    # BBB
+
+
+def test_exits_block_splits_stops_with_and_without_tp_and_counts_trade_totals():
+    events = _events() + [
+        _e("2026-09-19 10:00:00", "DDDUSDT", "tp1_hit", 30.0),
+        _e("2026-09-19 11:00:00", "DDDUSDT", "closed_stop_loss", -10.0),  # стоп после TP1: сделка в плюсе (+20)
+    ]
+    data = tjr.build_journal_data(events, NOW, reset_at="x")
+
+    ex = data["full"]["exits"]
+    assert ex["stop"] == {"n": 2, "sum": 0.0, "wins": 1, "without_tp": 1, "after_tp": 1}  # BBB -20 и DDD +20
+    assert ex["trail"] == {"n": 1, "sum": 35.0, "wins": 1}
+    assert ex["timeout"] == {"n": 0, "sum": 0.0, "wins": 0}
+
+
+def test_rendered_html_contains_stops_and_take_profit_section():
+    html = tjr.render_journal_html(tjr.build_journal_data(_events(), NOW, reset_at="x"))
+
+    assert "Стопы и take profit" in html
+
+
+def test_summary_text_shows_tp_legs_vs_stops_for_both_periods():
+    data = tjr.build_journal_data(_events(), NOW, reset_at="x")
+    text = tjr.format_summary(data, balance=10000.0)
+
+    assert "Ноги take profit: 4 (+45.00)" in text and "Стопы: 1 (-20.00)" in text   # весь период
+    assert "Ноги take profit: 1 (+10.00)" in text                                  # за 24 часа

@@ -254,6 +254,23 @@
     padding-top: 8px;
   }
 
+  .evblock {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 10px;
+  }
+  .evblock h3 { margin: 0; font-size: 14px; font-weight: 700; }
+  .evblock table { min-width: 0; max-width: 460px; }
+  .evblock tbody td { padding: 6px 12px; }
+  .evblock tr.total td { font-weight: 700; border-top: 2px solid var(--border); }
+  .evlines { font-size: 13px; line-height: 1.7; color: var(--ink-muted); }
+  .evlines b { color: var(--ink); }
+  .evhelp { font-size: 12px; color: var(--ink-faint); line-height: 1.5; }
+
   @media (max-width: 480px) {
     h1 { font-size: 22px; }
     .stat .value { font-size: 18px; }
@@ -277,6 +294,7 @@
       <div class="period-sub" id="sub24h"></div>
     </div>
     <div class="stats" id="stats-24h"></div>
+    <div class="evblock" id="ev-24h"></div>
     <div class="table-scroll"><table id="table-24h"></table></div>
   </section>
 
@@ -286,6 +304,7 @@
       <div class="period-sub" id="subFull"></div>
     </div>
     <div class="stats" id="stats-full"></div>
+    <div class="evblock" id="ev-full"></div>
     <div class="table-scroll"><table id="table-full"></table></div>
   </section>
 
@@ -352,13 +371,38 @@ function renderStats(el, s) {
   ).join('');
 }
 
+function renderEvents(el, ev, ex, s) {
+  const row = (name, x, cls) => `<tr class="${cls || ''}"><td>${name}</td><td class="num">${x.n}</td><td class="pnl num ${x.sum >= 0 ? 'pos' : 'neg'}">${fmtPnl(x.sum)}</td></tr>`;
+  const pct = (n, total) => total ? Math.round(n / total * 100) : 0;
+  el.innerHTML = `
+    <h3>Стопы и take profit</h3>
+    <table>
+      <thead><tr><th>Событие (нога)</th><th class="num">Штук</th><th class="num">Сумма, $</th></tr></thead>
+      <tbody>
+        ${row('TP1', ev.tp1)}${row('TP2', ev.tp2)}${row('TP3', ev.tp3)}${row('TP4 (закрытие трейлингом)', ev.tp4)}
+        ${row('Все take profit-ноги (TP1+TP2+TP3+TP4)', ev.tp_all, 'total')}
+        ${row('Стопы', ev.stop, 'total')}
+        ${row('Таймаут 24ч', ev.timeout)}
+      </tbody>
+    </table>
+    <div class="evlines">
+      <div>Соотношение take profit-ног к стопам: <b>${ev.tp_all.n} : ${ev.stop.n}</b></div>
+      <div>Закрытых сделок: <b>${s.closed}</b> · прибыльных <b>${s.wins}</b> (${pct(s.wins, s.closed)}%) · убыточных <b>${s.losses}</b> (${pct(s.losses, s.closed)}%)</div>
+      <div>Из закрытых по стопу (${ex.stop.n}): без единого TP — <b>${ex.stop.without_tp}</b> (все в минус), после TP1 и выше — <b>${ex.stop.after_tp}</b> (итог этих сделок ${fmtPnl(ex.stop.sum)}, прибыльных ${ex.stop.wins})</div>
+      <div>Закрыто трейлингом TP4: <b>${ex.trail.n}</b> (итог сделок ${fmtPnl(ex.trail.sum)}) · по таймауту: <b>${ex.timeout.n}</b> (${fmtPnl(ex.timeout.sum)})</div>
+    </div>
+    <div class="evhelp">Как считается: каждая ногa позиции — отдельное событие. TP1, TP2, TP3 — частичная фиксация 15% / 20% / 25% объёма; TP4 — закрытие остатка трейлингом. Стоп закрывает весь остаток. Поэтому у одной сделки может быть до трёх TP-событий и потом стоп или TP4, а «плюс/минус по сделкам» считается по итогу сделки целиком (все ноги вместе), а не по последнему событию.</div>`;
+}
+
 document.getElementById('generatedAt').textContent = DATA.generated_at;
 document.getElementById('sub24h').textContent = 'от ' + DATA.last24h.cutoff + ' до ' + DATA.generated_at;
 document.getElementById('subFull').textContent = 'от ' + DATA.reset_at + ' до ' + DATA.generated_at;
 
 renderStats(document.getElementById('stats-24h'), DATA.last24h.summary);
+renderEvents(document.getElementById('ev-24h'), DATA.last24h.events, DATA.last24h.exits, DATA.last24h.summary);
 renderTable(document.getElementById('table-24h'), DATA.last24h.positions);
 
 renderStats(document.getElementById('stats-full'), DATA.full.summary);
+renderEvents(document.getElementById('ev-full'), DATA.full.events, DATA.full.exits, DATA.full.summary);
 renderTable(document.getElementById('table-full'), DATA.full.positions);
 </script>
