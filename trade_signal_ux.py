@@ -24,13 +24,19 @@ def _format_signal_text(
     direction_word = "рост" if direction == "up" else "падение"
     classification_word = "разворот (фейд манипуляции)" if classification == "reversal" else "продолжение (по тренду)"
     levels_text = ", ".join(f"{lvl:.6g}" for lvl in magnet_levels) if magnet_levels else "—"
+    if classification == "reversal":
+        header = f"⚡ *Сетап найден, жду отката: {symbol}* [{exchange}]"
+        footer = "Вход НЕ выполнен: бот ждёт отката цены от экстремума и войдёт автоматически по параметрам профиля."
+    else:
+        header = f"⚡ *Сетап найден, вход по тренду: {symbol}* [{exchange}]"
+        footer = "Вход выполнен сразу по параметрам профиля (стратегия по тренду)."
     return (
-        f"⚡ *Найден сетап: {symbol}* [{exchange}]\n\n"
+        f"{header}\n\n"
         f"Импульс: {direction_word}\n"
         f"Классификация: {classification_word}\n"
         f"Текущая цена: `{current_price:.6g}`\n"
         f"Магнит-уровни: {levels_text}\n\n"
-        f"Вход выполняется автоматически по параметрам профиля."
+        f"{footer}"
     )
 
 

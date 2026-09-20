@@ -388,6 +388,31 @@ def seed_trade_events_if_empty(chat_id: int, rows: list[tuple]) -> int:
         return len(rows)
 
 
+def had_recent_stop_out(chat_id: int, symbol: str, direction: str, since: str) -> bool:
+    """
+    Закрывалась ли по стопу позиция chat_id по монете symbol в направлении direction
+    ('long'/'short') после момента since ('YYYY-MM-DD HH:MM:SS' UTC). Стоп определяется
+    по событию closed_stop_loss в trade_events около момента закрытия позиции
+    (closed_at позиции и ts события пишутся в одном тике, допуск ±2 минуты).
+    """
+    with get_conn() as conn:
+        row = conn.execute(
+            """
+            SELECT 1 FROM positions p
+            WHERE p.chat_id = ? AND p.symbol = ? AND p.direction = ?
+              AND p.status = 'closed' AND p.closed_at >= ?
+              AND EXISTS (
+                  SELECT 1 FROM trade_events e
+                  WHERE e.chat_id = p.chat_id AND e.symbol = p.symbol AND e.event = 'closed_stop_loss'
+                    AND e.ts >= datetime(p.closed_at, '-2 minutes') AND e.ts <= datetime(p.closed_at, '+2 minutes')
+              )
+            LIMIT 1
+            """,
+            (chat_id, symbol, direction, since),
+        ).fetchone()
+        return row is not None
+
+
 def create_trade_signal(
     chat_id: int, symbol: str, exchange: str, impulse_direction: str, classification: str
 ) -> int:

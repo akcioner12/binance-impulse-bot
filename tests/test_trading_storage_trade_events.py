@@ -47,3 +47,49 @@ def test_seed_trade_events_skips_when_live_events_already_recorded():
 
     assert added == 0
     assert len(trading_storage.get_trade_events(111)) == 1
+
+
+def _closed_position(symbol, direction, opened_at, closed_at):
+    position_id = trading_storage.create_position(
+        chat_id=111, symbol=symbol, exchange="Binance", direction=direction,
+        mode="paper", avg_entry_price=100.0, quantity=1.0, stop_loss=110.0,
+    )
+    with trading_storage.get_conn() as conn:
+        conn.execute("UPDATE positions SET status='closed', opened_at=?, closed_at=? WHERE id=?", (opened_at, closed_at, position_id))
+        conn.commit()
+    return position_id
+
+
+def test_had_recent_stop_out_true_for_short_stopped_within_window():
+    _closed_position("BTCUSDT", "short", "2026-09-20 10:00:00", "2026-09-20 12:00:00")
+    trading_storage.record_trade_event(111, "BTCUSDT", "closed_stop_loss", -50.0, ts="2026-09-20 12:00:00")
+
+    assert trading_storage.had_recent_stop_out(111, "BTCUSDT", "short", since="2026-09-20 00:00:00") is True
+
+
+def test_had_recent_stop_out_false_when_stop_is_older_than_window():
+    _closed_position("BTCUSDT", "short", "2026-09-18 10:00:00", "2026-09-18 12:00:00")
+    trading_storage.record_trade_event(111, "BTCUSDT", "closed_stop_loss", -50.0, ts="2026-09-18 12:00:00")
+
+    assert trading_storage.had_recent_stop_out(111, "BTCUSDT", "short", since="2026-09-20 00:00:00") is False
+
+
+def test_had_recent_stop_out_ignores_other_direction_symbol_and_non_stop_closes():
+    _closed_position("BTCUSDT", "long", "2026-09-20 10:00:00", "2026-09-20 12:00:00")
+    trading_storage.record_trade_event(111, "BTCUSDT", "closed_stop_loss", -50.0, ts="2026-09-20 12:00:00")
+    _closed_position("ETHUSDT", "short", "2026-09-20 10:00:00", "2026-09-20 12:00:00")
+    trading_storage.record_trade_event(111, "ETHUSDT", "closed_chandelier", 80.0, ts="2026-09-20 12:00:00")
+
+    since = "2026-09-20 00:00:00"
+    assert trading_storage.had_recent_stop_out(111, "BTCUSDT", "short", since) is False  # стоп был по лонгу
+    assert trading_storage.had_recent_stop_out(111, "ETHUSDT", "short", since) is False  # закрыт трейлингом, не стопом
+    assert trading_storage.had_recent_stop_out(111, "XRPUSDT", "short", since) is False  # нет позиций
+
+
+def test_had_recent_stop_out_ignores_stop_of_a_different_position_of_same_symbol():
+    """Стоп события относится к позиции по времени: более ранняя позиция по монете не должна 'красть' чужой стоп."""
+    _closed_position("BTCUSDT", "short", "2026-09-20 01:00:00", "2026-09-20 02:00:00")  # закрыта не стопом
+    _closed_position("BTCUSDT", "long", "2026-09-20 10:00:00", "2026-09-20 12:00:00")
+    trading_storage.record_trade_event(111, "BTCUSDT", "closed_stop_loss", -50.0, ts="2026-09-20 12:00:00")
+
+    assert trading_storage.had_recent_stop_out(111, "BTCUSDT", "short", since="2026-09-20 00:00:00") is False

@@ -144,6 +144,14 @@ SYMBOL_BLACKLIST = {
     "ARXUSDT", "BBUSDT", "KAITOUSDT",
 }
 
+# 20.09.2026: живые повторные входы по пампам сразу после стопа по той же монете --
+# -0.53R (n=17, -$985 за 5 дней; серии AKE x4, LSK x3): если памп продолжает идти
+# и выбил стоп, тезис на разворот опровергнут. Для дампов повторы после стопа в
+# плюсе (+0.09R) -- правило только для пампов. История по эпизодам (2,5 мес.) этого
+# эффекта НЕ показывает (повторные эпизоды пампов +0.48R против +0.49R первых) --
+# вывод неубедительный, пересмотреть через 1-2 недели данных.
+PUMP_STOP_COOLDOWN_HOURS = 24
+
 
 def _is_dump_anchor_stale(daily_candles: list[dict]) -> bool:
     """
@@ -195,6 +203,12 @@ async def handle_new_impulse(
     if profile is None or not profile["is_active"]:
         return None
     if symbol in SYMBOL_BLACKLIST:
+        return None
+    if direction == "up" and trading_storage.had_recent_stop_out(
+        chat_id, symbol, "short",
+        (datetime.now(timezone.utc).replace(tzinfo=None) - timedelta(hours=PUMP_STOP_COOLDOWN_HOURS)).strftime("%Y-%m-%d %H:%M:%S"),
+    ):
+        logger.info(f"Автотрейдинг [{symbol}]: памп пропущен -- по монете был стоп за последние {PUMP_STOP_COOLDOWN_HOURS}ч")
         return None
     if (
         symbol in _pending_setups or symbol in _open_positions

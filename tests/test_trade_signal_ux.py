@@ -48,6 +48,31 @@ async def test_announcement_is_plain_text_without_buttons_and_mentions_automatic
 
 
 @pytest.mark.asyncio
+async def test_reversal_announcement_says_waiting_for_pullback_not_entered():
+    """
+    20.09.2026: «Найден сетап» через минуту после стопа выглядело как немедленный
+    повторный вход -- на деле сетап только вооружён и ждёт отката (CELRUSDT: вход
+    через 66 минут). Текст должен это говорить прямо.
+    """
+    with patch("trade_signal_ux.send_text", new=AsyncMock()) as mock_send:
+        await _announce(AsyncMock(), classification="reversal")
+
+    text = mock_send.call_args[0][2]
+    assert "жду отката" in text
+    assert "Найден сетап" not in text
+
+
+@pytest.mark.asyncio
+async def test_continuation_announcement_says_entered_immediately():
+    with patch("trade_signal_ux.send_text", new=AsyncMock()) as mock_send:
+        await _announce(AsyncMock(), classification="continuation")
+
+    text = mock_send.call_args[0][2]
+    assert "вход выполнен" in text.lower()
+    assert "жду отката" not in text
+
+
+@pytest.mark.asyncio
 async def test_execution_error_is_reported_to_admin_and_not_raised():
     """Прод-инцидент 14.09.2026: сбой в execute_fn не должен теряться молча."""
     async def failing_execute_fn(*args):
