@@ -103,9 +103,9 @@ async def test_execute_setup_halves_size_when_stale_anchor():
 
     setup = live_trading._pending_setups["LSKUSDT"]
     # direction="down" -> DUMP_RISK_PERCENT=4% (не profile["risk_percent"], см. 17.09.2026
-    # асимметричный риск памп/дамп): risk_amount = 10000*4% = 400; SL(long, atr=2.0*1.5=3.0)
-    # -> stop_distance=3 -> qty=400/3; со стейл-фильтром (0.5x) -- вдвое меньше
-    assert setup["part_size"] == pytest.approx(400 / 3 * 0.5 / 2)
+    # асимметричный риск памп/дамп): risk_amount = 10000*4% = 400; SL(long, atr=2.0*REVERSAL_ATR_MULTIPLIER)
+    # -> stop_distance=4 -> qty=400/4; со стейл-фильтром (0.5x) -- вдвое меньше
+    assert setup["part_size"] == pytest.approx(400 / (2.0 * live_trading.REVERSAL_ATR_MULTIPLIER) * 0.5 / 2)
 
 
 @pytest.mark.asyncio
@@ -122,4 +122,4 @@ async def test_execute_setup_full_size_when_anchor_fresh():
         )
 
     setup = live_trading._pending_setups["LSKUSDT"]
-    assert setup["part_size"] == pytest.approx(400 / 3 / 2)
+    assert setup["part_size"] == pytest.approx(400 / (2.0 * live_trading.REVERSAL_ATR_MULTIPLIER) / 2)

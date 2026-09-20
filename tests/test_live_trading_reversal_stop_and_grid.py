@@ -3,7 +3,6 @@ from unittest.mock import patch
 import entry_engine
 import live_trading
 
-
 PROFILE = {
     "is_active": 1, "max_concurrent_trades": 3, "risk_percent": 1.0,
     "sl_method": "atr", "sl_fixed_percent": None, "tp_split_preset": "equal",
@@ -14,14 +13,6 @@ PROFILE = {
 def setup_function():
     live_trading._pending_setups.clear()
     live_trading._open_positions.clear()
-
-
-def test_tp_r_multiples_for_pump_direction():
-    assert live_trading._tp_r_multiples_for_direction("up") == live_trading.PUMP_TP_R_MULTIPLES
-
-
-def test_tp_r_multiples_for_dump_direction():
-    assert live_trading._tp_r_multiples_for_direction("down") == live_trading.DUMP_TP_R_MULTIPLES
 
 
 def _make_pending_setup(direction):
@@ -35,34 +26,39 @@ def _make_pending_setup(direction):
     }
 
 
-def test_dump_part_fill_uses_widened_tp_r_multiples():
+def test_constants_20_09_2026():
     """
-    Бэктест 17.09.2026 (257 сделок, 2,5 мес.): раздвинутая сетка TP1-3
-    (R=1.5/3/5 вместо 1/2/3) на дампах даёт +21% PnL по дампам ($36792 vs
-    $30357 за период) при том же сплите долей (15/20/25%) -- дамп-эдж сильнее,
-    есть смысл давать прибыли бежать дальше. На пампах наоборот текущая сетка
-    (R=1/2/3) лучше -- поэтому направление-зависимо, как и с риском (16.09).
+    20.09.2026 (622 исторических + 80 живых сигналов): широкий стоп 2.0 ATR1ч снижает долю
+    'стоп без единого TP' 45% -> 36% без потери R; TP1 дампов на 1.0R поднимает долю
+    дошедших до TP1 с 53% до ~60% при том же R. Continuation остаётся на старом 1.5 ATR1ч.
     """
+    assert live_trading.REVERSAL_ATR_MULTIPLIER == 2.0
+    assert live_trading.DEFAULT_ATR_MULTIPLIER == 1.5
+    assert live_trading.DUMP_TP_R_MULTIPLES == (1.0, 3.0, 5.0)
+    assert live_trading.PUMP_TP_R_MULTIPLES == (1.0, 2.0, 3.0)
+
+
+def test_reversal_dump_stop_is_2_atr_and_tp1_is_1r():
     live_trading._pending_setups["BTCUSDT"] = _make_pending_setup("down")
     with patch("live_trading.trading_storage.create_position", return_value=1), \
          patch("live_trading.trading_storage.update_trade_signal_status"):
         live_trading.handle_price_tick("BTCUSDT", price=100.0)
-        live_trading.handle_price_tick("BTCUSDT", price=100.8)  # часть 1 срабатывает (long, вход=100.8)
+        live_trading.handle_price_tick("BTCUSDT", price=100.8)  # часть 1: long по 100.8
 
     state = live_trading._open_positions["BTCUSDT"]["state"]
-    # entry=100.8, SL(long, atr=2.0*REVERSAL_ATR_MULTIPLIER=4.0) -> SL=96.8, R=4.0
-    # DUMP_TP_R_MULTIPLES=(1.0,3.0,5.0) -> TP1=104.8, TP2=112.8, TP3=120.8 (с 20.09.2026 TP1 на 1.0R; до этого 1.5/3/5)
+    # SL = 100.8 - 2.0*2.0 = 96.8, R = 4.0; TP (1.0/3.0/5.0 R) = 104.8 / 112.8 / 120.8
+    assert round(state.stop_loss, 2) == 96.8
     assert [round(tp["level"], 2) for tp in state.take_profits] == [104.8, 112.8, 120.8]
 
 
-def test_pump_part_fill_keeps_default_tp_r_multiples():
+def test_reversal_pump_stop_is_2_atr_with_unchanged_tp_grid():
     live_trading._pending_setups["ETHUSDT"] = _make_pending_setup("up")
     with patch("live_trading.trading_storage.create_position", return_value=1), \
          patch("live_trading.trading_storage.update_trade_signal_status"):
         live_trading.handle_price_tick("ETHUSDT", price=100.0)
-        live_trading.handle_price_tick("ETHUSDT", price=99.2)  # часть 1 срабатывает (short, вход=99.2)
+        live_trading.handle_price_tick("ETHUSDT", price=99.2)  # часть 1: short по 99.2
 
     state = live_trading._open_positions["ETHUSDT"]["state"]
-    # entry=99.2, SL(short, atr=2.0*REVERSAL_ATR_MULTIPLIER=4.0) -> SL=103.2, R=4.0
-    # PUMP_TP_R_MULTIPLES=(1.0,2.0,3.0) -> TP1=95.2, TP2=91.2, TP3=87.2
+    # SL = 99.2 + 2.0*2.0 = 103.2, R = 4.0; TP (1/2/3 R) = 95.2 / 91.2 / 87.2
+    assert round(state.stop_loss, 2) == 103.2
     assert [round(tp["level"], 2) for tp in state.take_profits] == [95.2, 91.2, 87.2]

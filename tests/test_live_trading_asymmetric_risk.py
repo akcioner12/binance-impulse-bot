@@ -68,9 +68,9 @@ async def test_reversal_setup_uses_pump_risk_percent_not_profile():
         )
 
     setup = live_trading._pending_setups["BTCUSDT"]
-    # risk_amount = 10000 * PUMP_RISK_PERCENT(1%) = 100; SL(short, atr=2.0*1.5=3.0) -> stop_distance=3
+    # risk_amount = 10000 * PUMP_RISK_PERCENT(1%) = 100; SL(short, atr=2.0*REVERSAL_ATR_MULTIPLIER) -> stop_distance=4
     # part_size = (100/3) / 2 -- НЕ по profile["risk_percent"], а по константе пампов
-    expected_part_size = (10000 * live_trading.PUMP_RISK_PERCENT / 100 / 3) / 2
+    expected_part_size = (10000 * live_trading.PUMP_RISK_PERCENT / 100 / (2.0 * live_trading.REVERSAL_ATR_MULTIPLIER)) / 2
     assert setup["part_size"] == pytest.approx(expected_part_size)
 
 
@@ -88,5 +88,5 @@ async def test_reversal_setup_uses_dump_risk_percent_not_profile():
         )
 
     setup = live_trading._pending_setups["ETHUSDT"]
-    expected_part_size = (10000 * live_trading.DUMP_RISK_PERCENT / 100 / 3) / 2
+    expected_part_size = (10000 * live_trading.DUMP_RISK_PERCENT / 100 / (2.0 * live_trading.REVERSAL_ATR_MULTIPLIER)) / 2
     assert setup["part_size"] == pytest.approx(expected_part_size)

@@ -50,7 +50,13 @@ ATR_REFRESH_STEP_PCT = 50.0
 # вычитывается main.py на каждом тике через pop_notifications().
 _notification_queue: list[dict] = []
 
-DEFAULT_ATR_MULTIPLIER = 1.5
+DEFAULT_ATR_MULTIPLIER = 1.5  # continuation-входы (не менялся)
+
+# 20.09.2026 (622 исторических + 80 живых сигналов, движок бота): стоп 2.0 ATR1ч вместо 1.5
+# для входов на разворот -- доля "стоп без единого TP" 45% -> 36%, avgR +1.00 -> +1.05
+# (живые +0.04 -> +0.21); при постоянном риске позиция чуть меньше. 2.5 -- 31%, но R не
+# выше; 3.0 хуже. Ожидание более глубокого отката/подтверждения входа НЕ помогло.
+REVERSAL_ATR_MULTIPLIER = 2.0
 
 # Защита от многоволновых манипуляций (прод-инцидент 12-13.09: LSKUSDT/POWRUSDT/
 # ARKUSDT/VTHOUSDT -- все 5 убыточных сделок за ночь оказались РАННИМИ волнами
@@ -124,7 +130,7 @@ def _risk_percent_for_direction(direction: str) -> float:
 # есть смысл давать прибыли бежать дальше. На пампах наоборот текущая
 # сетка (R=1/2/3) лучше. Применяется только к reversal-сетапам (fade).
 PUMP_TP_R_MULTIPLES = (1.0, 2.0, 3.0)
-DUMP_TP_R_MULTIPLES = (1.5, 3.0, 5.0)
+DUMP_TP_R_MULTIPLES = (1.0, 3.0, 5.0)  # 20.09.2026: TP1 1.5R -> 1.0R (до TP1 53% -> ~57% при той же R; 3R/5R оставлены); до 20.09 было (1.5, 3.0, 5.0), до 17.09 (1.0, 2.0, 3.0)
 
 
 def _tp_r_multiples_for_direction(direction: str) -> tuple[float, float, float]:
@@ -392,7 +398,7 @@ async def _create_pending_reversal_setup(
     trade_direction = position_manager.determine_trade_direction(direction, "reversal")
     estimated_stop_loss = position_manager.calculate_stop_loss(
         current_price, trade_direction, profile["sl_method"],
-        analysis["atr_1h"], DEFAULT_ATR_MULTIPLIER, profile["sl_fixed_percent"],
+        analysis["atr_1h"], REVERSAL_ATR_MULTIPLIER, profile["sl_fixed_percent"],
     )
     balance = trading_storage.get_paper_balance(chat_id) or 0.0
     total_size = position_manager.calculate_position_size(
@@ -849,7 +855,7 @@ def _handle_part_fill(setup: dict, symbol: str, price: float) -> None:
     result = order_executor.open_paper_position(
         chat_id=setup["chat_id"], symbol=symbol, exchange=setup["exchange"], direction=direction,
         fills=fills, sl_method=profile["sl_method"], atr_1h=setup["atr_1h"],
-        atr_multiplier=DEFAULT_ATR_MULTIPLIER, fixed_percent=profile["sl_fixed_percent"],
+        atr_multiplier=REVERSAL_ATR_MULTIPLIER, fixed_percent=profile["sl_fixed_percent"],
         tp_split_preset=profile["tp_split_preset"], breakeven_after_tp=profile["breakeven_after_tp"],
         r_multiples=_tp_r_multiples_for_direction(setup["impulse_direction"]),
     )
