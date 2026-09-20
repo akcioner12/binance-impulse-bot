@@ -24,7 +24,7 @@ async def analyze_impulse(
     candles_15m = await market_data.fetch_klines(session, exchange, symbol, "15m", limit=50)
     candles_1h = await market_data.fetch_klines(session, exchange, symbol, "1h", limit=24)
     candles_4h = await market_data.fetch_klines(session, exchange, symbol, "4h", limit=30)
-    funding_rate = await market_data.fetch_funding_rate(session, exchange, symbol)
+    funding_rate = await market_data.fetch_funding_rate(session, exchange, symbol, settled=True)
     oi_history = await market_data.fetch_open_interest_history(session, exchange, symbol, period="5m", limit=30)
 
     trend_4h = indicators.trend_direction(candles_4h, period=20)

@@ -147,3 +147,20 @@ async def test_analyze_impulse_returns_atr_15m_and_atr_1h():
     # Синтетические свечи из _candle() дают постоянный True Range = 2.0 (см. indicators_atr тесты)
     assert result["atr_15m"] == pytest.approx(2.0)
     assert result["atr_1h"] is not None
+
+
+@pytest.mark.asyncio
+async def test_analyze_impulse_requests_settled_funding_for_trading_filter():
+    """Фильтр пампов откалиброван на последнем РАССЧИТАННОМ funding, а не на текущем расчётном."""
+    funding_mock = AsyncMock(return_value=0.0001)
+    fake_fetch_klines = _make_fake_fetch_klines({
+        "15m": [_candle(100 + i) for i in range(50)],
+        "1h": [_candle(145.0 + i * (5.0 / 23)) for i in range(24)],
+        "4h": [_candle(120 + i) for i in range(30)],
+    })
+    with patch("impulse_analysis.market_data.fetch_klines", new=AsyncMock(side_effect=fake_fetch_klines)), \
+         patch("impulse_analysis.market_data.fetch_funding_rate", new=funding_mock), \
+         patch("impulse_analysis.market_data.fetch_open_interest_history", new=AsyncMock(return_value=[])):
+        await impulse_analysis.analyze_impulse(None, "BTCUSDT", "Binance", "up", 150.0)
+
+    assert funding_mock.await_args.kwargs.get("settled") is True

@@ -102,12 +102,38 @@ async def _fetch_bybit_funding_rate(session: aiohttp.ClientSession, symbol: str)
     return float(tickers[0]["fundingRate"])
 
 
-async def fetch_funding_rate(session: aiohttp.ClientSession, exchange: str, symbol: str) -> float:
-    """Текущий funding rate в долях (0.0001 = 0.01%)."""
+async def _fetch_binance_settled_funding_rate(session: aiohttp.ClientSession, symbol: str) -> float:
+    url = f"{BINANCE_FUTURES_REST}/fapi/v1/fundingRate"
+    async with session.get(url, params={"symbol": symbol, "limit": 1}) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
+    return float(data[-1]["fundingRate"]) if data else 0.0
+
+
+async def _fetch_bybit_settled_funding_rate(session: aiohttp.ClientSession, symbol: str) -> float:
+    url = f"{BYBIT_FUTURES_REST}/v5/market/funding/history"
+    async with session.get(url, params={"category": "linear", "symbol": symbol, "limit": 1}) as resp:
+        resp.raise_for_status()
+        data = await resp.json()
+
+    if data.get("retCode") != 0:
+        logger.error(f"Bybit funding history ошибка ({symbol}): {data.get('retMsg')}")
+        return 0.0
+
+    rows = data["result"]["list"]
+    return float(rows[0]["fundingRate"]) if rows else 0.0
+
+
+async def fetch_funding_rate(session: aiohttp.ClientSession, exchange: str, symbol: str, settled: bool = False) -> float:
+    """
+    Funding rate в долях (0.0001 = 0.01%). По умолчанию -- ТЕКУЩИЙ расчётный
+    (для показа в алертах); settled=True -- последний уже РАССЧИТАННЫЙ, на
+    котором откалиброван фильтр пампов (у текущего другой масштаб и иногда знак).
+    """
     if exchange == "Binance":
-        return await _fetch_binance_funding_rate(session, symbol)
+        return await (_fetch_binance_settled_funding_rate if settled else _fetch_binance_funding_rate)(session, symbol)
     if exchange == "Bybit":
-        return await _fetch_bybit_funding_rate(session, symbol)
+        return await (_fetch_bybit_settled_funding_rate if settled else _fetch_bybit_funding_rate)(session, symbol)
     raise ValueError(f"Неизвестная биржа: {exchange}")
 
 

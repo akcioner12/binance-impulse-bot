@@ -125,3 +125,43 @@ async def test_fetch_open_interest_history_bybit_returns_empty_on_error():
     session = _FakeSession({"retCode": 10001, "retMsg": "bad symbol", "result": {"list": []}})
     history = await market_data.fetch_open_interest_history(session, "Bybit", "BADSYMBOL")
     assert history == []
+
+
+@pytest.mark.asyncio
+async def test_fetch_funding_rate_binance_settled_uses_funding_history_not_premium_index():
+    """
+    premiumIndex.lastFundingRate -- ТЕКУЩИЙ расчётный funding, он скачет во время
+    пампа (у GUSDT 20.09.2026 даже другой знак); фильтр пампов откалиброван на
+    ПОСЛЕДНЕМ рассчитанном (история /fundingRate), поэтому для него берём его.
+    """
+    session = _FakeSession([{"symbol": "GUSDT", "fundingRate": "0.00006216", "fundingTime": 1}])
+    rate = await market_data.fetch_funding_rate(session, "Binance", "GUSDT", settled=True)
+
+    assert rate == pytest.approx(0.00006216)
+    assert session.last_url.endswith("/fapi/v1/fundingRate")
+    assert session.last_params == {"symbol": "GUSDT", "limit": 1}
+
+
+@pytest.mark.asyncio
+async def test_fetch_funding_rate_binance_settled_returns_zero_when_history_empty():
+    session = _FakeSession([])
+    assert await market_data.fetch_funding_rate(session, "Binance", "NEWUSDT", settled=True) == 0.0
+
+
+@pytest.mark.asyncio
+async def test_fetch_funding_rate_bybit_settled_uses_funding_history():
+    session = _FakeSession({
+        "retCode": 0,
+        "result": {"list": [{"symbol": "BTCUSDT", "fundingRate": "0.00031", "fundingRateTimestamp": "1"}]},
+    })
+    rate = await market_data.fetch_funding_rate(session, "Bybit", "BTCUSDT", settled=True)
+
+    assert rate == pytest.approx(0.00031)
+    assert "v5/market/funding/history" in session.last_url
+    assert session.last_params["limit"] == 1
+
+
+@pytest.mark.asyncio
+async def test_fetch_funding_rate_bybit_settled_returns_zero_on_error_or_empty():
+    assert await market_data.fetch_funding_rate(_FakeSession({"retCode": 10001, "retMsg": "bad", "result": {"list": []}}), "Bybit", "X", settled=True) == 0.0
+    assert await market_data.fetch_funding_rate(_FakeSession({"retCode": 0, "result": {"list": []}}), "Bybit", "X", settled=True) == 0.0

@@ -12,6 +12,12 @@ def setup_function():
     live_trading._open_positions.clear()
 
 
+def test_pump_risk_reduced_to_1_percent_while_dump_stays_4_percent():
+    """20.09.2026: живые пампы -0.45R за 5 дней (n=41) -- вдвое меньше риск, пока не разберёмся; дампы в норме."""
+    assert live_trading.PUMP_RISK_PERCENT == 1.0
+    assert live_trading.DUMP_RISK_PERCENT == 4.0
+
+
 def test_risk_percent_for_pump_direction():
     assert live_trading._risk_percent_for_direction("up") == live_trading.PUMP_RISK_PERCENT
 
@@ -62,8 +68,8 @@ async def test_reversal_setup_uses_pump_risk_percent_not_profile():
         )
 
     setup = live_trading._pending_setups["BTCUSDT"]
-    # risk_amount = 10000 * PUMP_RISK_PERCENT(2%) = 200; SL(short, atr=2.0*1.5=3.0) -> stop_distance=3
-    # part_size = (200/3) / 2 -- НЕ (100/3)/2, которое было бы при profile["risk_percent"]=1%
+    # risk_amount = 10000 * PUMP_RISK_PERCENT(1%) = 100; SL(short, atr=2.0*1.5=3.0) -> stop_distance=3
+    # part_size = (100/3) / 2 -- НЕ по profile["risk_percent"], а по константе пампов
     expected_part_size = (10000 * live_trading.PUMP_RISK_PERCENT / 100 / 3) / 2
     assert setup["part_size"] == pytest.approx(expected_part_size)
 

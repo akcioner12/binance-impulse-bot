@@ -103,8 +103,8 @@ async def test_execute_setup_halves_size_on_second_wave():
 
     assert result["classification"] == "continuation"
     state = live_trading._open_positions["LSKUSDT"]["state"]
-    # direction="up" -> PUMP_RISK_PERCENT=2% (не profile["risk_percent"], см. 17.09.2026
-    # асимметричный риск памп/дамп): risk_amount = 10000*2% = 200; SL = 100 - 1.5*2.0 = 97
-    # -> stop_distance = 3 -> без волновой защиты qty = 200/3 = 66.67; на второй волне
-    # множитель 0.5 -> 33.33
-    assert state.quantity == pytest.approx(200 / 3 * 0.5)
+    # direction="up" -> PUMP_RISK_PERCENT (не profile["risk_percent"], см. 17.09.2026
+    # асимметричный риск памп/дамп): risk_amount = 10000*PUMP_RISK_PERCENT%; SL = 100 - 1.5*2.0 = 97
+    # -> stop_distance = 3 -> без волновой защиты qty = risk_amount/3; на второй волне
+    # множитель 0.5
+    assert state.quantity == pytest.approx(10000 * live_trading.PUMP_RISK_PERCENT / 100 / 3 * 0.5)
