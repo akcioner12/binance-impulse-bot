@@ -82,6 +82,16 @@ def test_format_summary_shows_full_and_24h_numbers_and_balance():
     assert "50" in text  # winrate
 
 
+def test_format_summary_shows_realized_balance_unrealized_and_equity():
+    data = tjr.build_journal_data(_events(), NOW, reset_at="15.09.2026 09:08 UTC")
+    text = tjr.format_summary(data, balance=8603.0, unrealized=2300.5, open_count=26)
+
+    assert "8603.00" in text  # реализованный баланс
+    assert "+2300.50" in text and "26" in text  # нереализованное по открытым
+    assert "10903.50" in text  # эквити
+    assert "+9.0" in text  # к стартовым $10 000
+
+
 @pytest.mark.parametrize("now_utc, expected_sec", [
     (datetime(2026, 9, 19, 5, 0, 0, tzinfo=timezone.utc), 3600),           # 08:00 Киев (лето, UTC+3) -> 09:00
     (datetime(2026, 9, 19, 6, 0, 1, tzinfo=timezone.utc), 12 * 3600 - 1),  # 09:00:01 -> 21:00
@@ -115,12 +125,14 @@ def test_bundled_seed_file_is_parseable_and_nonempty():
 async def test_build_and_send_sends_summary_then_html_document():
     with patch("trading_journal_report.trading_storage.get_trade_events", return_value=_events()), \
          patch("trading_journal_report.trading_storage.get_paper_balance", return_value=10050.0), \
+         patch("trading_journal_report.live_trading.get_unrealized_pnl", return_value=(200.0, 3)), \
          patch("trading_journal_report.send_text", new=AsyncMock()) as mock_text, \
          patch("trading_journal_report.send_document", new=AsyncMock(return_value=True)) as mock_doc:
         await tjr.build_and_send_journal(chat_id=111, now=NOW)
 
     assert mock_text.await_count == 1
     assert "10050.00" in mock_text.await_args.args[2]
+    assert "10250.00" in mock_text.await_args.args[2]  # эквити = баланс + нереализованное
     assert mock_doc.await_count == 1
     assert mock_doc.await_args.args[1] == 111
     assert mock_doc.await_args.args[2].endswith(".html")

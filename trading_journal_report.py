@@ -14,12 +14,14 @@ from zoneinfo import ZoneInfo
 import aiohttp
 
 from notifier import send_text, send_document
+import live_trading
 import trading_storage
 
 logger = logging.getLogger(__name__)
 
 KYIV_TZ = ZoneInfo("Europe/Kyiv")
 REPORT_HOURS_KYIV = (9, 21)
+START_BALANCE = 10000.0
 RESET_AT_LABEL = "15.09.2026 09:08 UTC (12:08 Киев)"  # момент обнуления баланса до $10 000; обновлять при новом обнулении
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
@@ -101,7 +103,7 @@ def render_journal_html(data: dict) -> str:
             .replace("__RESET_AT__", data["reset_at"]))
 
 
-def format_summary(data: dict, balance: float) -> str:
+def format_summary(data: dict, balance: float, unrealized: float = 0.0, open_count: int = 0) -> str:
     def block(title: str, s: dict) -> str:
         return (
             f"*{title}*\n"
@@ -110,11 +112,14 @@ def format_summary(data: dict, balance: float) -> str:
             f"PnL: {s['total_pnl']:+.2f} USDT"
         )
 
+    equity = balance + unrealized
     return (
         f"📒 *Живой журнал автотрейдинга* — {data['generated_at']}\n\n"
         + block(f"С обнуления баланса — {data['reset_at']}", data["full"]["summary"]) + "\n\n"
         + block("Последние 24 часа", data["last24h"]["summary"]) + "\n\n"
-        + f"Текущий виртуальный баланс: {balance:.2f} USDT\n"
+        + f"Баланс (только закрытые части сделок): {balance:.2f} USDT\n"
+        + f"Нереализованный PnL по открытым ({open_count}): {unrealized:+.2f} USDT\n"
+        + f"*Эквити: {equity:.2f} USDT ({(equity / START_BALANCE - 1) * 100:+.1f}% к {START_BALANCE:.0f})*\n"
         + "Таблица со всеми сделками — файлом ниже."
     )
 
@@ -147,10 +152,11 @@ async def build_and_send_journal(chat_id: int, now: datetime | None = None):
     now = now or datetime.now(timezone.utc).replace(tzinfo=None, microsecond=0)
     events = trading_storage.get_trade_events(chat_id)
     balance = trading_storage.get_paper_balance(chat_id) or 0.0
+    unrealized, open_count = live_trading.get_unrealized_pnl(chat_id)
     data = build_journal_data(events, now, RESET_AT_LABEL)
 
     async with aiohttp.ClientSession() as session:
-        await send_text(session, chat_id, format_summary(data, balance))
+        await send_text(session, chat_id, format_summary(data, balance, unrealized, open_count))
         filename = f"journal_{now.strftime('%Y%m%d_%H%M')}.html"
         await send_document(session, chat_id, filename, render_journal_html(data).encode("utf-8"))
 

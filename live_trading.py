@@ -25,6 +25,7 @@ logger = logging.getLogger(__name__)
 
 _pending_setups: dict[str, dict] = {}
 _open_positions: dict[str, dict] = {}
+_last_prices: dict[str, float] = {}  # последний тик по символам с открытой позицией -- для нереализованного PnL в отчёте
 
 # Бронь слота на время анализа импульса (между проверкой лимита и постановкой
 # в _awaiting_confirmation внутри trade_signal_ux) -- прод-инцидент 14.09.2026:
@@ -419,6 +420,20 @@ def get_position_snapshot(symbol: str) -> dict | None:
     }
 
 
+def get_unrealized_pnl(chat_id: int) -> tuple[float, int]:
+    """Нереализованный PnL открытых позиций chat_id по последним тикам и число этих позиций."""
+    total, count = 0.0, 0
+    for symbol, entry in _open_positions.items():
+        if entry["chat_id"] != chat_id:
+            continue
+        state = entry["state"]
+        count += 1
+        price = _last_prices.get(symbol)
+        if price is not None:
+            total += order_executor.calculate_position_pnl(state.direction, state.avg_entry_price, price, state.remaining_quantity)
+    return total, count
+
+
 def handle_price_tick(symbol: str, price: float) -> list[str] | None:
     """
     Вызывается на каждый тик цены символа. Возвращает список произошедших
@@ -432,6 +447,9 @@ def handle_price_tick(symbol: str, price: float) -> list[str] | None:
     этом же тике), затем состояние (возможно, уже обновлённой) открытой позиции.
     """
     events = []
+
+    if symbol in _open_positions:
+        _last_prices[symbol] = price
 
     if symbol in _pending_setups:
         pending_events = _process_pending_setup_tick(symbol, price)
