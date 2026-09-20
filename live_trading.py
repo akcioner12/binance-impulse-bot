@@ -28,7 +28,7 @@ _open_positions: dict[str, dict] = {}
 _last_prices: dict[str, float] = {}  # последний тик по символам с открытой позицией -- для нереализованного PnL в отчёте
 
 # Бронь слота на время анализа импульса (между проверкой лимита и постановкой
-# в _awaiting_confirmation внутри trade_signal_ux) -- прод-инцидент 14.09.2026:
+# сетапа в _pending_setups в execute_setup) -- прод-инцидент 14.09.2026:
 # DailyHighTracker при холодном старте выстрелил 41 сигналом почти одновременно,
 # и каждый вызов handle_new_impulse читал len(get_open_positions()) НЕЗАВИСИМО,
 # до того как хоть один успел что-то забронировать -- max_concurrent_trades
@@ -198,7 +198,7 @@ async def handle_new_impulse(
         return None
     if (
         symbol in _pending_setups or symbol in _open_positions
-        or symbol in _reserved_symbols or trade_signal_ux.is_awaiting_confirmation(symbol)
+        or symbol in _reserved_symbols
     ):
         return None
     # Бронируем слот СИНХРОННО, до первого await -- иначе конкурентные вызовы
@@ -240,12 +240,12 @@ async def handle_new_impulse(
             impulse_direction=direction, classification=classification,
         )
 
-        await trade_signal_ux.request_confirmation(
+        await trade_signal_ux.announce_and_execute(
             session, chat_id, symbol, exchange, direction, classification,
             current_price, window_start_price, profile, analysis, signal_id,
             magnet_levels=magnet_levels_list, execute_fn=execute_setup,
         )
-        return {"classification": classification, "signal_id": signal_id, "awaiting_confirmation": True}
+        return {"classification": classification, "signal_id": signal_id}
     finally:
         _reserved_symbols.discard(symbol)
 
@@ -268,8 +268,8 @@ async def execute_setup(
     current_price: float, window_start_price: float, profile: dict, analysis: dict, signal_id: int,
 ) -> dict:
     """
-    Реально исполняет сетап -- вызывается из trade_signal_ux после подтверждения
-    (кнопкой или по таймауту), НЕ напрямую из handle_new_impulse().
+    Реально исполняет сетап -- вызывается из trade_signal_ux.announce_and_execute()
+    сразу после создания сигнала (подтверждение и 5-минутное ожидание убраны 20.09.2026).
     """
     size_multiplier = _compute_wave_size_multiplier(chat_id, symbol, signal_id)
     if size_multiplier is None:

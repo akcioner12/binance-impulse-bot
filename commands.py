@@ -15,7 +15,6 @@ from trading_onboarding import (
     handle_callback as onboarding_handle_callback,
     handle_text as onboarding_handle_text,
 )
-import trade_signal_ux
 import trading_storage
 import emergency_controls
 import live_trading
@@ -241,10 +240,7 @@ async def _handle_callback_query(session: aiohttp.ClientSession, callback_query:
     data = callback_query.get("data", "")
     chat_id = callback_query["message"]["chat"]["id"]
 
-    if data.startswith("trade_confirm:"):
-        _, choice, symbol = data.split(":", 2)
-        await trade_signal_ux.handle_confirmation_callback(symbol, choice)
-    elif data.startswith("emergency:"):
+    if data.startswith("emergency:"):
         action = data.split(":", 1)[1]
         await _handle_emergency_callback(session, chat_id, action)
     elif data == "reset_balance:confirm":

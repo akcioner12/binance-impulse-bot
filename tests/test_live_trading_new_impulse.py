@@ -115,7 +115,7 @@ async def test_handle_new_impulse_skips_pump_reversal_with_weak_funding():
          patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
              return_value=_analysis("reversal", funding_rate=0.00005))), \
          patch("live_trading.trading_storage.create_trade_signal") as mock_create_signal, \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.trade_signal_ux.announce_and_execute", new=AsyncMock()) as mock_request:
         result = await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="up", current_price=100.0, window_start_price=70.0,
@@ -134,13 +134,13 @@ async def test_handle_new_impulse_proceeds_pump_reversal_with_extreme_funding():
              return_value=_analysis("reversal", funding_rate=0.0002))), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(return_value=[])), \
          patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.trade_signal_ux.announce_and_execute", new=AsyncMock()) as mock_request:
         result = await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="up", current_price=100.0, window_start_price=70.0,
         )
 
-    assert result == {"classification": "reversal", "signal_id": 99, "awaiting_confirmation": True}
+    assert result == {"classification": "reversal", "signal_id": 99}
     mock_request.assert_called_once()
 
 
@@ -159,7 +159,7 @@ async def test_handle_new_impulse_computes_real_magnet_levels_for_reversal():
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(return_value=[])), \
          patch("live_trading.magnet_levels_module.find_magnet_levels", return_value=[150.0, 200.0]) as mock_find, \
          patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.trade_signal_ux.announce_and_execute", new=AsyncMock()) as mock_request:
         await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="up", current_price=100.0, window_start_price=70.0,
@@ -177,7 +177,7 @@ async def test_handle_new_impulse_skips_magnet_levels_for_continuation():
              return_value=_analysis("continuation", funding_rate=0.00001))), \
          patch("live_trading.magnet_levels_module.find_magnet_levels") as mock_find, \
          patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.trade_signal_ux.announce_and_execute", new=AsyncMock()) as mock_request:
         await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="up", current_price=100.0, window_start_price=70.0,
@@ -194,7 +194,7 @@ async def test_handle_new_impulse_funding_filter_does_not_apply_to_pump_continua
          patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
              return_value=_analysis("continuation", funding_rate=0.00001))), \
          patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.trade_signal_ux.announce_and_execute", new=AsyncMock()) as mock_request:
         result = await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="up", current_price=100.0, window_start_price=70.0,
@@ -212,7 +212,7 @@ async def test_handle_new_impulse_funding_filter_does_not_apply_to_dumps():
              return_value=_analysis("reversal", funding_rate=0.00001))), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(return_value=[])), \
          patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.trade_signal_ux.announce_and_execute", new=AsyncMock()) as mock_request:
         result = await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="down", current_price=100.0, window_start_price=130.0,
@@ -244,7 +244,7 @@ async def test_handle_new_impulse_race_does_not_exceed_max_concurrent_trades():
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
          patch("live_trading.impulse_analysis.analyze_impulse", new=slow_analyze), \
          patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.trade_signal_ux.announce_and_execute", new=AsyncMock()) as mock_request:
 
         task_a = asyncio.create_task(live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="AAAUSDT", exchange="Binance",
@@ -279,7 +279,7 @@ async def test_handle_new_impulse_skips_dump_reversal_with_climax():
          patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
              return_value=_analysis("reversal", funding_rate=0.00001, is_climax=True))), \
          patch("live_trading.trading_storage.create_trade_signal") as mock_create_signal, \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.trade_signal_ux.announce_and_execute", new=AsyncMock()) as mock_request:
         result = await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="down", current_price=100.0, window_start_price=130.0,
@@ -298,13 +298,13 @@ async def test_handle_new_impulse_proceeds_dump_reversal_without_climax():
              return_value=_analysis("reversal", funding_rate=0.00001, is_climax=False))), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(return_value=[])), \
          patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.trade_signal_ux.announce_and_execute", new=AsyncMock()) as mock_request:
         result = await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="down", current_price=100.0, window_start_price=130.0,
         )
 
-    assert result == {"classification": "reversal", "signal_id": 99, "awaiting_confirmation": True}
+    assert result == {"classification": "reversal", "signal_id": 99}
     mock_request.assert_called_once()
 
 
@@ -316,7 +316,7 @@ async def test_handle_new_impulse_climax_filter_does_not_apply_to_pumps():
              return_value=_analysis("reversal", funding_rate=0.0002, is_climax=True))), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(return_value=[])), \
          patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.trade_signal_ux.announce_and_execute", new=AsyncMock()) as mock_request:
         result = await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="up", current_price=100.0, window_start_price=70.0,
@@ -341,7 +341,7 @@ async def test_handle_new_impulse_skips_continuation_on_dumps():
          patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
              return_value=_analysis("continuation", funding_rate=0.00001))), \
          patch("live_trading.trading_storage.create_trade_signal") as mock_create_signal, \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.trade_signal_ux.announce_and_execute", new=AsyncMock()) as mock_request:
         result = await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="down", current_price=100.0, window_start_price=130.0,
@@ -359,11 +359,11 @@ async def test_handle_new_impulse_proceeds_continuation_on_pumps():
          patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(
              return_value=_analysis("continuation", funding_rate=0.00001))), \
          patch("live_trading.trading_storage.create_trade_signal", return_value=99), \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.trade_signal_ux.announce_and_execute", new=AsyncMock()) as mock_request:
         result = await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="up", current_price=100.0, window_start_price=70.0,
         )
 
-    assert result == {"classification": "continuation", "signal_id": 99, "awaiting_confirmation": True}
+    assert result == {"classification": "continuation", "signal_id": 99}
     mock_request.assert_called_once()

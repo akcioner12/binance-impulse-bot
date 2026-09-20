@@ -23,7 +23,7 @@ ANALYSIS_REVERSAL = {
 
 
 @pytest.mark.asyncio
-async def test_handle_new_impulse_requests_confirmation_instead_of_executing_directly():
+async def test_handle_new_impulse_executes_setup_right_away_without_waiting_for_confirmation():
     async def fake_fetch_klines(session, exchange, symbol, interval, limit=100):
         return []
 
@@ -32,28 +32,13 @@ async def test_handle_new_impulse_requests_confirmation_instead_of_executing_dir
          patch("live_trading.trading_storage.create_trade_signal", return_value=55), \
          patch("live_trading.impulse_analysis.analyze_impulse", new=AsyncMock(return_value=ANALYSIS_REVERSAL)), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=fake_fetch_klines)), \
-         patch("live_trading.trade_signal_ux.request_confirmation", new=AsyncMock()) as mock_request:
+         patch("live_trading.execute_setup", new=AsyncMock(return_value={"classification": "reversal", "signal_id": 55})) as mock_execute, \
+         patch("trade_signal_ux.send_text", new=AsyncMock()):
         result = await live_trading.handle_new_impulse(
             session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
             direction="up", current_price=100.0, window_start_price=70.0,
         )
 
-    mock_request.assert_called_once()
-    kwargs = mock_request.call_args.kwargs
-    assert kwargs["execute_fn"] is live_trading.execute_setup
-    assert result["awaiting_confirmation"] is True
-    # Позиция/сетап ещё НЕ созданы -- ждём подтверждения
-    assert "BTCUSDT" not in live_trading._pending_setups
-    assert "BTCUSDT" not in live_trading._open_positions
-
-
-@pytest.mark.asyncio
-async def test_handle_new_impulse_none_when_symbol_already_awaiting_confirmation():
-    with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
-         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
-         patch("live_trading.trade_signal_ux.is_awaiting_confirmation", return_value=True):
-        result = await live_trading.handle_new_impulse(
-            session=None, chat_id=111, symbol="BTCUSDT", exchange="Binance",
-            direction="up", current_price=100.0, window_start_price=70.0,
-        )
-    assert result is None
+    mock_execute.assert_awaited_once()
+    assert result == {"classification": "reversal", "signal_id": 55}
+    assert "awaiting_confirmation" not in result
