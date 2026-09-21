@@ -636,10 +636,20 @@ def _format_timeout_report(symbol: str, event: dict, total_pnl: float) -> str:
     )
 
 
+def _format_stuck_stop_report(symbol: str, event: dict, state: order_executor.OpenPositionState) -> str:
+    target = "безубыток+" if state.tp_hit_count == 0 else "уровень TP1"
+    return (
+        f"⏱ *Памп {PUMP_STUCK_TIMEOUT_HOURS}ч в плюсе: стоп подтянут: {symbol}*\n\n"
+        f"Новый стоп: `{event['new_stop_loss']:.6g}` ({target})\n"
+        f"Позиция не закрыта — держим дальше, прибыль защищена"
+    )
+
+
 def _check_pump_stuck_timeout(entry: dict, price: float) -> dict | None:
     """
     См. PUMP_STUCK_TIMEOUT_HOURS выше -- только пампы (short), максимум 1
-    взятый тейк, не закрыта, и с момента входа прошло >= порога.
+    взятый тейк, не закрыта, и с момента входа прошло >= порога. В убытке --
+    закрытие по рынку; в плюсе -- подтяжка стопа (см. ниже).
     """
     state = entry["state"]
     opened_at = entry.get("opened_at")
@@ -651,7 +661,23 @@ def _check_pump_stuck_timeout(entry: dict, price: float) -> dict | None:
     if now - opened_at < timedelta(hours=PUMP_STUCK_TIMEOUT_HOURS):
         return None
 
+    if entry.get("stuck_stop_moved"):
+        return None
+
     pnl = order_executor.calculate_position_pnl(state.direction, state.avg_entry_price, price, state.remaining_quantity)
+    if pnl > 0:
+        # 21.09.2026: в плюсе не закрываем по рынку, а подтягиваем стоп -- в безубыток+ (TP не
+        # взят) либо на уровень TP1 (взят один TP). Один раз на позицию.
+        if state.tp_hit_count == 0:
+            new_stop = position_manager.calculate_breakeven_plus_price(state.avg_entry_price, state.direction)
+        else:
+            new_stop = state.take_profits[0]["level"]
+        entry["stuck_stop_moved"] = True
+        if new_stop < state.stop_loss:
+            state.stop_loss = new_stop
+            return {"event": "stuck_stop_tightened", "new_stop_loss": new_stop}
+        return None
+
     state.closed = True
     return {"event": "closed_timeout_24h", "pnl_delta": pnl, "exit_price": price}
 
@@ -671,6 +697,12 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
     events = []
 
     timeout_event = _check_pump_stuck_timeout(entry, price)
+    if timeout_event is not None and timeout_event["event"] == "stuck_stop_tightened":
+        trading_storage.update_position_stop_loss(state.position_id, timeout_event["new_stop_loss"])
+        _queue_notification(chat_id, _format_stuck_stop_report(symbol, timeout_event, state))
+        logger.info(f"Автотрейдинг [{symbol}]: stuck_stop_tightened, new_sl={timeout_event['new_stop_loss']:.6g}")
+        events.append("stuck_stop_tightened")
+        timeout_event = None
     if timeout_event is not None:
         total_pnl = _realized_pnl_so_far(state) + timeout_event["pnl_delta"]
         trading_storage.adjust_paper_balance(chat_id, timeout_event["pnl_delta"])
@@ -708,7 +740,7 @@ def _process_open_position_tick(symbol: str, price: float) -> list[str] | None:
             if pending is not None:
                 pending["invalidated"] = True
         del _open_positions[symbol]
-        return [stop_event["event"]]
+        return events + [stop_event["event"]]
 
     tp_events = order_executor.check_take_profit_hits(state, price)
     for event in tp_events:

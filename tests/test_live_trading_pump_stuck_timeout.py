@@ -1,6 +1,8 @@
 from datetime import datetime, timedelta, timezone
 from unittest.mock import patch
 
+import pytest
+
 import order_executor
 import live_trading
 
@@ -39,11 +41,11 @@ def _make_short_position(opened_hours_ago: float, tp_hit_count: int = 0):
     return state
 
 
-def test_pump_force_closed_after_24h_with_zero_tp():
+def test_pump_in_loss_force_closed_after_24h_with_zero_tp():
     _make_short_position(opened_hours_ago=25)
     with patch("live_trading.trading_storage.adjust_paper_balance") as mock_adjust, \
          patch("live_trading.trading_storage.close_position") as mock_close:
-        events = live_trading.handle_price_tick("BTCUSDT", price=95.0)  # цена между входом и SL, между входом и TP1
+        events = live_trading.handle_price_tick("BTCUSDT", price=105.0)  # убыток по шорту (вход 100), стоп 110 не тронут
 
     assert events == ["closed_timeout_24h"]
     assert "BTCUSDT" not in live_trading._open_positions
@@ -55,20 +57,20 @@ def test_pump_force_closed_after_24h_with_zero_tp():
     assert "24" in notes[0]["text"]
 
 
-def test_pump_force_closed_after_24h_with_one_tp():
+def test_pump_in_loss_force_closed_after_24h_with_one_tp():
     _make_short_position(opened_hours_ago=30, tp_hit_count=1)
     with patch("live_trading.trading_storage.adjust_paper_balance"), \
          patch("live_trading.trading_storage.close_position"):
-        events = live_trading.handle_price_tick("BTCUSDT", price=95.0)
+        events = live_trading.handle_price_tick("BTCUSDT", price=105.0)
 
     assert events == ["closed_timeout_24h"]
 
     # TP1 (short, 90) уже зафиксировал 1.0*(100-90)=+10.00; закрытие остатка
-    # по таймауту 3.0*(100-95)=+15.00 -> итог по сделке +25.00. Уведомление
+    # по таймауту в убытке 3.0*(100-105)=-15.00 -> итог по сделке -5.00. Уведомление
     # должно показывать оба числа, не только ногу закрытия (прод-вопрос 19.09.2026).
     notes = live_trading.pop_notifications()
-    assert "+15.00" in notes[0]["text"]
-    assert "+25.00" in notes[0]["text"]
+    assert "-15.00" in notes[0]["text"]
+    assert "-5.00" in notes[0]["text"]
 
 
 def test_pump_not_closed_before_24h():
@@ -120,3 +122,56 @@ def test_position_without_opened_at_not_affected_by_timeout_rule():
 
     assert events is None
     assert "BTCUSDT" in live_trading._open_positions
+
+
+def test_pump_in_profit_after_24h_moves_stop_to_breakeven_plus_instead_of_closing():
+    """
+    21.09.2026: на 24ч позиция пампа в плюсе не закрывается по рынку, а подтягивает стоп
+    (закрытие в убытке остаётся). TP не взят -> стоп в безубыток+ (вход 100, short -> 99.92).
+    """
+    state = _make_short_position(opened_hours_ago=25)
+    with patch("live_trading.trading_storage.adjust_paper_balance") as mock_adjust,          patch("live_trading.trading_storage.close_position") as mock_close,          patch("live_trading.trading_storage.update_position_stop_loss") as mock_update_sl:
+        events = live_trading.handle_price_tick("BTCUSDT", price=95.0)
+
+    assert events == ["stuck_stop_tightened"]
+    assert "BTCUSDT" in live_trading._open_positions
+    assert state.stop_loss == pytest.approx(99.92)
+    mock_close.assert_not_called()
+    mock_adjust.assert_not_called()
+    mock_update_sl.assert_called_once()
+    assert mock_update_sl.call_args[0][0] == 1
+    assert mock_update_sl.call_args[0][1] == pytest.approx(99.92)
+    notes = live_trading.pop_notifications()
+    assert len(notes) == 1 and "99.92" in notes[0]["text"] and "24" in notes[0]["text"]
+
+
+def test_pump_in_profit_after_24h_with_tp1_moves_stop_to_tp1_level():
+    """TP1 уже взят (short, 90) и цена ушла дальше в нашу сторону (85) -> стоп на уровень TP1 (90), позиция остаётся."""
+    state = _make_short_position(opened_hours_ago=25, tp_hit_count=1)
+    with patch("live_trading.trading_storage.update_position_stop_loss") as mock_update_sl:
+        events = live_trading.handle_price_tick("BTCUSDT", price=85.0)
+
+    assert events == ["stuck_stop_tightened"]
+    assert state.stop_loss == pytest.approx(90.0)
+    assert "BTCUSDT" in live_trading._open_positions
+    assert mock_update_sl.call_args[0][1] == pytest.approx(90.0)
+
+
+def test_pump_in_profit_with_tp1_retraced_above_tp1_level_is_stopped_out_right_away():
+    """Цена откатилась выше уровня TP1 (95 > 90): новый стоп на TP1 сразу срабатывает и фиксирует остаток в плюсе."""
+    _make_short_position(opened_hours_ago=25, tp_hit_count=1)
+    with patch("live_trading.trading_storage.adjust_paper_balance"),          patch("live_trading.trading_storage.close_position"),          patch("live_trading.trading_storage.update_position_stop_loss"):
+        events = live_trading.handle_price_tick("BTCUSDT", price=95.0)
+
+    assert events == ["stuck_stop_tightened", "closed_stop_loss"]
+    assert "BTCUSDT" not in live_trading._open_positions
+
+
+def test_stop_tightening_happens_only_once_per_position():
+    _make_short_position(opened_hours_ago=25)
+    with patch("live_trading.trading_storage.update_position_stop_loss") as mock_update_sl:
+        live_trading.handle_price_tick("BTCUSDT", price=95.0)
+        events = live_trading.handle_price_tick("BTCUSDT", price=94.0)
+
+    assert events is None
+    mock_update_sl.assert_called_once()

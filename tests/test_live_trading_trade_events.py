@@ -58,11 +58,11 @@ def test_pump_timeout_close_is_recorded_as_trade_event():
     _make_open_position(direction="short", opened_hours_ago=25)
     with patch("live_trading.trading_storage.adjust_paper_balance"), \
          patch("live_trading.trading_storage.close_position"):
-        live_trading.handle_price_tick("BTCUSDT", price=95.0)
+        live_trading.handle_price_tick("BTCUSDT", price=105.0)
 
     events = trading_storage.get_trade_events(111)
 
-    assert [(e["event"], e["pnl"]) for e in events] == [("closed_timeout_24h", 20.0)]
+    assert [(e["event"], e["pnl"]) for e in events] == [("closed_timeout_24h", -20.0)]
 
 
 def test_breakeven_and_chandelier_activation_are_not_recorded():
