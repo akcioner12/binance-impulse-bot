@@ -23,6 +23,10 @@ KYIV_TZ = ZoneInfo("Europe/Kyiv")
 REPORT_HOURS_KYIV = (9, 21)
 START_BALANCE = 10000.0
 RESET_AT_LABEL = "15.09.2026 09:08 UTC (12:08 Киев)"  # момент обнуления баланса до $10 000; обновлять при новом обнулении
+# Первые сутки после обнуления шли по старой логике: сделки, закрытые до этого момента, в «без первых суток» не входят.
+# Считаем по моменту ЗАКРЫТИЯ сделки (открытые и закрытые позже — уже «после»).
+FIRST_DAY_END_UTC = datetime(2026, 9, 16, 9, 8, 0)
+FIRST_DAY_END_LABEL = "16.09.2026 09:08 UTC (12:08 Киев)"
 
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _TEMPLATE_PATH = os.path.join(_HERE, "trading_journal_template.html")
@@ -48,10 +52,11 @@ def _group_positions(events: list[dict]) -> list[dict]:
         pos = open_by_symbol.get(e["symbol"])
         if pos is None:
             pos = {"symbol": e["symbol"], "events": [], "tp1": None, "tp2": None, "tp3": None,
-                   "exit_ts": None, "exit_type": None, "pnl": 0.0, "first_ts": ts}
+                   "exit_ts": None, "exit_type": None, "pnl": 0.0, "first_ts": ts, "raw": []}
             open_by_symbol[e["symbol"]] = pos
             positions.append(pos)
         pos["events"].append(ts)
+        pos["raw"].append(e)
         pos["pnl"] += e["pnl"]
         if e["event"] in _TP_EVENTS:
             pos[e["event"][:3]] = ts
@@ -107,8 +112,15 @@ def _exit_stats(closed: list[dict]) -> dict:
     return {"stop": stop, "trail": block("closed_chandelier"), "timeout": block("closed_timeout_24h")}
 
 
-def build_journal_data(events: list[dict], now: datetime, reset_at: str) -> dict:
+def build_journal_data(events: list[dict], now: datetime, reset_at: str,
+                       first_day_end: datetime = FIRST_DAY_END_UTC) -> dict:
     positions = _group_positions(events)
+    def _in_first_day(p: dict) -> bool:
+        return p["exit_ts"] is not None and p["exit_ts"] < first_day_end
+
+    first_day = [p for p in positions if _in_first_day(p)]
+    after = [p for p in positions if not _in_first_day(p)]
+    after_events = [e for p in after for e in p["raw"]]
     cutoff = now - timedelta(hours=24)
     cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
     recent = [p for p in positions if any(t >= cutoff for t in p["events"])]
@@ -118,6 +130,12 @@ def build_journal_data(events: list[dict], now: datetime, reset_at: str) -> dict
         "full": {
             "summary": _summarize(positions), "positions": [_position_row(p) for p in positions],
             "events": _event_stats(events), "exits": _exit_stats([p for p in positions if p["exit_ts"]]),
+        },
+        "first_day": {"count": len(first_day), "pnl": round(sum(p["pnl"] for p in first_day), 2),
+                      "end_label": FIRST_DAY_END_LABEL},
+        "after_first_day": {
+            "summary": _summarize(after), "positions": [_position_row(p) for p in after],
+            "events": _event_stats(after_events), "exits": _exit_stats([p for p in after if p["exit_ts"]]),
         },
         "last24h": {
             "summary": _summarize(recent), "positions": [_position_row(p) for p in recent],
@@ -147,8 +165,13 @@ def format_summary(data: dict, balance: float, unrealized: float = 0.0, open_cou
         )
 
     equity = balance + unrealized
+    first_day = data["first_day"]
+    equity_after = equity - first_day["pnl"]
     return (
         f"📒 *Живой журнал автотрейдинга* — {data['generated_at']}\n\n"
+        + f"*Сводный баланс без первых суток: {equity_after:.2f} USDT ({(equity_after / START_BALANCE - 1) * 100:+.1f}% к {START_BALANCE:.0f})*\n"
+        + f"(эквити {equity:.2f} минус PnL первых суток {first_day['pnl']:+.2f}; первые сутки — сделки, закрытые до {first_day['end_label']}: {first_day['count']} шт.)\n\n"
+        + block("Без первых суток", data["after_first_day"]["summary"], data["after_first_day"]["events"]) + "\n\n"
         + block(f"С обнуления баланса — {data['reset_at']}", data["full"]["summary"], data["full"]["events"]) + "\n\n"
         + block("Последние 24 часа", data["last24h"]["summary"], data["last24h"]["events"]) + "\n\n"
         + f"Баланс (только закрытые части сделок): {balance:.2f} USDT\n"

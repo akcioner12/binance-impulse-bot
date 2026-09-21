@@ -186,3 +186,34 @@ def test_summary_text_shows_tp_legs_vs_stops_for_both_periods():
 
     assert "Ноги take profit: 4 (+45.00)" in text and "Стопы: 1 (-20.00)" in text   # весь период
     assert "Ноги take profit: 1 (+10.00)" in text                                  # за 24 часа
+
+
+def test_first_day_is_split_by_close_time_and_excluded_from_after_first_day():
+    events = [
+        _e("2026-09-15 10:00:00", "OLDUSDT", "closed_stop_loss", -100.0),   # закрыта в первые сутки
+        _e("2026-09-16 06:00:00", "RAYUSDT", "tp1_hit", 40.0),              # начата в первые сутки, закрыта позже
+        _e("2026-09-18 09:00:00", "RAYUSDT", "closed_chandelier", 1000.0),
+        _e("2026-09-17 10:00:00", "NEWUSDT", "closed_stop_loss", -30.0),
+    ]
+    data = tjr.build_journal_data(events, NOW, reset_at="x", first_day_end=datetime(2026, 9, 16, 9, 8, 0))
+
+    assert data["first_day"]["count"] == 1 and data["first_day"]["pnl"] == -100.0
+    after = data["after_first_day"]
+    assert {p["symbol"] for p in after["positions"]} == {"RAYUSDT", "NEWUSDT"}
+    assert after["summary"]["total_pnl"] == 1010.0
+    assert after["events"]["tp_all"] == {"n": 2, "sum": 1040.0}   # tp1 + трейлинг у RAY
+    assert after["events"]["stop"]["n"] == 1
+    assert data["full"]["summary"]["total_pnl"] == 910.0
+
+
+def test_format_summary_leads_with_equity_without_first_day():
+    events = [
+        _e("2026-09-15 10:00:00", "OLDUSDT", "closed_stop_loss", -100.0),
+        _e("2026-09-17 10:00:00", "NEWUSDT", "closed_stop_loss", -30.0),
+    ]
+    data = tjr.build_journal_data(events, NOW, reset_at="x", first_day_end=datetime(2026, 9, 16, 9, 8, 0))
+    text = tjr.format_summary(data, balance=9870.0, unrealized=50.0, open_count=1)
+
+    # эквити 9920 минус PnL первых суток (-100) = 10020
+    assert "Сводный баланс без первых суток: 10020.00" in text
+    assert "Без первых суток" in text
