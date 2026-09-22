@@ -30,3 +30,9 @@ def test_main_source_seeds_trade_events_history_on_startup():
     """История событий с 15.09 (собрана из логов до появления trade_events) грузится один раз."""
     source = inspect.getsource(main.main)
     assert "seed_trade_events_if_empty(ADMIN_CHAT_ID" in source
+
+
+def test_main_source_starts_journal_web_server():
+    """HTTP-страница живого журнала (journal_web) должна быть в том же asyncio.gather."""
+    source = inspect.getsource(main.main)
+    assert "run_web_server(" in source
