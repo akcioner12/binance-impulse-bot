@@ -206,6 +206,43 @@ def test_first_day_is_split_by_close_time_and_excluded_from_after_first_day():
     assert data["full"]["summary"]["total_pnl"] == 910.0
 
 
+def test_build_journal_data_includes_equity_block_when_balance_given():
+    data = tjr.build_journal_data(_events(), NOW, reset_at="x", balance=8603.0, unrealized=2300.5, open_count=26)
+
+    eq = data["equity"]
+    assert eq["balance"] == 8603.0 and eq["unrealized"] == 2300.5 and eq["open_count"] == 26
+    assert eq["equity"] == 10903.5
+    assert eq["equity_pct"] == 9.0
+    assert eq["equity_after_first_day"] == 10903.5  # в _events() первых суток нет
+
+
+def test_build_journal_data_equity_accounts_for_first_day_pnl():
+    events = [
+        _e("2026-09-15 10:00:00", "OLDUSDT", "closed_stop_loss", -100.0),  # первые сутки
+        _e("2026-09-17 10:00:00", "NEWUSDT", "closed_stop_loss", -30.0),
+    ]
+    data = tjr.build_journal_data(events, NOW, reset_at="x", first_day_end=datetime(2026, 9, 16, 9, 8, 0),
+                                   balance=9870.0, unrealized=50.0, open_count=1)
+
+    eq = data["equity"]
+    assert eq["equity"] == 9920.0
+    assert eq["equity_after_first_day"] == 10020.0  # 9920 - (-100)
+    assert eq["equity_after_first_day_pct"] == 0.2
+
+
+def test_build_journal_data_equity_is_none_without_balance():
+    data = tjr.build_journal_data(_events(), NOW, reset_at="x")
+
+    assert data["equity"] is None
+
+
+def test_rendered_html_shows_equity_section_when_present():
+    data = tjr.build_journal_data(_events(), NOW, reset_at="x", balance=8603.0, unrealized=2300.5, open_count=26)
+    html = tjr.render_journal_html(data)
+
+    assert "10903.5" in html
+
+
 def test_format_summary_leads_with_equity_without_first_day():
     events = [
         _e("2026-09-15 10:00:00", "OLDUSDT", "closed_stop_loss", -100.0),

@@ -113,7 +113,8 @@ def _exit_stats(closed: list[dict]) -> dict:
 
 
 def build_journal_data(events: list[dict], now: datetime, reset_at: str,
-                       first_day_end: datetime = FIRST_DAY_END_UTC) -> dict:
+                       first_day_end: datetime = FIRST_DAY_END_UTC,
+                       balance: float | None = None, unrealized: float = 0.0, open_count: int = 0) -> dict:
     positions = _group_positions(events)
     def _in_first_day(p: dict) -> bool:
         return p["exit_ts"] is not None and p["exit_ts"] < first_day_end
@@ -124,14 +125,26 @@ def build_journal_data(events: list[dict], now: datetime, reset_at: str,
     cutoff = now - timedelta(hours=24)
     cutoff_str = cutoff.strftime("%Y-%m-%d %H:%M:%S")
     recent = [p for p in positions if any(t >= cutoff for t in p["events"])]
+    first_day_pnl = round(sum(p["pnl"] for p in first_day), 2)
+    equity = None
+    if balance is not None:
+        eq = balance + unrealized
+        eq_after = eq - first_day_pnl
+        equity = {
+            "balance": round(balance, 2), "unrealized": round(unrealized, 2), "open_count": open_count,
+            "equity": round(eq, 2), "equity_pct": round((eq / START_BALANCE - 1) * 100, 1),
+            "equity_after_first_day": round(eq_after, 2),
+            "equity_after_first_day_pct": round((eq_after / START_BALANCE - 1) * 100, 1),
+        }
     return {
         "generated_at": now.strftime("%d.%m.%Y %H:%M UTC"),
         "reset_at": reset_at,
+        "equity": equity,
         "full": {
             "summary": _summarize(positions), "positions": [_position_row(p) for p in positions],
             "events": _event_stats(events), "exits": _exit_stats([p for p in positions if p["exit_ts"]]),
         },
-        "first_day": {"count": len(first_day), "pnl": round(sum(p["pnl"] for p in first_day), 2),
+        "first_day": {"count": len(first_day), "pnl": first_day_pnl,
                       "end_label": FIRST_DAY_END_LABEL},
         "after_first_day": {
             "summary": _summarize(after), "positions": [_position_row(p) for p in after],
@@ -210,7 +223,7 @@ async def build_and_send_journal(chat_id: int, now: datetime | None = None):
     events = trading_storage.get_trade_events(chat_id)
     balance = trading_storage.get_paper_balance(chat_id) or 0.0
     unrealized, open_count = live_trading.get_unrealized_pnl(chat_id)
-    data = build_journal_data(events, now, RESET_AT_LABEL)
+    data = build_journal_data(events, now, RESET_AT_LABEL, balance=balance, unrealized=unrealized, open_count=open_count)
 
     async with aiohttp.ClientSession() as session:
         await send_text(session, chat_id, format_summary(data, balance, unrealized, open_count))

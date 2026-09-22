@@ -288,6 +288,14 @@
     <b>Важно:</b> в проде логируются только события ВЫХОДА (TP1-3, стоп, трейлинг-закрытие) — момент входа в сделку нигде не пишется в лог. Первая колонка с датой в каждой строке — это время ПЕРВОГО известного события по позиции (обычно TP1 или стоп), не факт открытия сделки. Позиции без строки "выход" — ещё открыты на момент сборки отчёта.
   </div>
 
+  <section class="period" id="section-equity" style="display:none">
+    <div class="period-head">
+      <div class="period-title">Эквити (с учётом открытых сделок)</div>
+      <div class="period-sub" id="subEquity"></div>
+    </div>
+    <div class="stats" id="stats-equity"></div>
+  </section>
+
   <section class="period" id="section-after">
     <div class="period-head">
       <div class="period-title">Без первых суток</div>
@@ -405,6 +413,17 @@ function renderEvents(el, ev, ex, s) {
 }
 
 document.getElementById('generatedAt').textContent = DATA.generated_at;
+if (DATA.equity) {
+  const eq = DATA.equity;
+  document.getElementById('section-equity').style.display = '';
+  document.getElementById('subEquity').textContent = 'на ' + DATA.generated_at;
+  document.getElementById('stats-equity').innerHTML = [
+    ['Баланс (закрытые части)', eq.balance.toFixed(2), ''],
+    ['Нереализованный PnL (' + eq.open_count + ' откр.)', fmtPnl(eq.unrealized), eq.unrealized >= 0 ? 'pos' : 'neg'],
+    ['Эквити', eq.equity.toFixed(2) + ' (' + fmtPnl(eq.equity_pct) + '%)', eq.equity_pct >= 0 ? 'pos' : 'neg'],
+    ['Эквити без первых суток', eq.equity_after_first_day.toFixed(2) + ' (' + fmtPnl(eq.equity_after_first_day_pct) + '%)', eq.equity_after_first_day_pct >= 0 ? 'pos' : 'neg'],
+  ].map(([label, value, cls]) => `<div class="stat"><div class="label">${label}</div><div class="value ${cls}">${value}</div></div>`).join('');
+}
 document.getElementById('sub24h').textContent = 'от ' + DATA.last24h.cutoff + ' до ' + DATA.generated_at;
 document.getElementById('subAfter').textContent = 'сделки, закрытые после ' + DATA.first_day.end_label + ' (первые сутки: ' + DATA.first_day.count + ' сд., PnL ' + (DATA.first_day.pnl >= 0 ? '+' : '') + DATA.first_day.pnl.toFixed(2) + ' — торговались по старой логике)';
 document.getElementById('subFull').textContent = 'от ' + DATA.reset_at + ' до ' + DATA.generated_at;
