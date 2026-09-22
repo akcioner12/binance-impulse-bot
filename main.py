@@ -20,6 +20,7 @@ Binance нет вообще. Так каждый тикер обрабатыва
 
 import asyncio
 import logging
+import re
 import time
 
 import aiohttp
@@ -75,9 +76,23 @@ def _in_startup_grace() -> bool:
     return _started_at_monotonic is not None and time.monotonic() - _started_at_monotonic < STARTUP_GRACE_SECONDS
 
 
+def _is_valid_symbol(symbol: str) -> bool:
+    """
+    22.09.2026: в проде обнаружены реальные позиции/события с "символами" вроде
+    "牛来USDT" и "龙虾USDT" -- не существующие на бирже пары (источник порчи не
+    найден, похоже на повреждение где-то в цепочке WS/декодирования); бот тем не
+    менее открывал по ним paper-позиции и терял реальные (для paper-баланса) деньги.
+    Заслон: тикер всегда ASCII, буквы/цифры, заканчивается на USDT.
+    """
+    return bool(re.fullmatch(r"[A-Z0-9]+USDT", symbol))
+
+
 async def on_kline_close(symbol: str, exchange: str, price: float, ts: int):
     """Вызывается коллектором (любой биржи) при закрытии каждой минутной свечи."""
     global _tick_count, _last_tick_log_time
+    if not _is_valid_symbol(symbol):
+        logger.warning(f"Автотрейдинг: отброшен невалидный символ {symbol!r} [{exchange}], price={price}")
+        return
     _tick_count += 1
 
     if symbol not in _seen_symbols:
