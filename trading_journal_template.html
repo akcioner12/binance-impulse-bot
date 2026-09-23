@@ -125,6 +125,15 @@
     gap: 14px;
   }
 
+  section.period-highlight {
+    background: var(--surface);
+    border: 2px solid var(--accent);
+    border-radius: 14px;
+    padding: 16px;
+  }
+
+  .period-highlight .period-title { color: var(--accent); }
+
   .period-head {
     display: flex;
     align-items: baseline;
@@ -296,6 +305,16 @@
     <div class="stats" id="stats-equity"></div>
   </section>
 
+  <section class="period period-highlight" id="section-24h">
+    <div class="period-head">
+      <div class="period-title">📅 Сегодня — последние 24 часа</div>
+      <div class="period-sub" id="sub24h"></div>
+    </div>
+    <div class="stats" id="stats-24h"></div>
+    <div class="evblock" id="ev-24h"></div>
+    <div class="table-scroll"><table id="table-24h"></table></div>
+  </section>
+
   <section class="period" id="section-after">
     <div class="period-head">
       <div class="period-title">Без первых суток</div>
@@ -304,16 +323,6 @@
     <div class="stats" id="stats-after"></div>
     <div class="evblock" id="ev-after"></div>
     <div class="table-scroll"><table id="table-after"></table></div>
-  </section>
-
-  <section class="period" id="section-24h">
-    <div class="period-head">
-      <div class="period-title">Последние 24 часа</div>
-      <div class="period-sub" id="sub24h"></div>
-    </div>
-    <div class="stats" id="stats-24h"></div>
-    <div class="evblock" id="ev-24h"></div>
-    <div class="table-scroll"><table id="table-24h"></table></div>
   </section>
 
   <section class="period" id="section-full">
