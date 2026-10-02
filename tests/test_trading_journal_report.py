@@ -187,6 +187,19 @@ def test_rendered_html_has_clickable_sortable_table_columns():
     assert "thead th.sortable" in html  # CSS-класс курсора/ховера для кликабельных заголовков
 
 
+def test_rendered_html_shows_headline_balance_at_top_like_telegram_message():
+    """
+    Крупная строка «Сводный баланс без первых суток» должна быть наверху страницы
+    (как первая жирная строка в сообщении бота в Telegram), а не только мелкой
+    плиткой внизу раздела «Эквити».
+    """
+    data = tjr.build_journal_data(_events(), NOW, reset_at="x", balance=8603.0, unrealized=2300.5, open_count=26)
+    html = tjr.render_journal_html(data)
+
+    assert "headlineBalance" in html
+    assert "Сводный баланс без первых суток" in html
+
+
 def test_summary_text_shows_tp_legs_vs_stops_for_both_periods():
     data = tjr.build_journal_data(_events(), NOW, reset_at="x")
     text = tjr.format_summary(data, balance=10000.0)

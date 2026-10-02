@@ -286,7 +286,19 @@
   @media (max-width: 480px) {
     h1 { font-size: 22px; }
     .stat .value { font-size: 18px; }
+    .headline-balance .value { font-size: 22px; }
   }
+
+  .headline-balance {
+    background: var(--surface);
+    border: 1px solid var(--border);
+    border-radius: 12px;
+    padding: 14px 16px;
+  }
+  .headline-balance .label { font-size: 13px; color: var(--ink-muted); margin-bottom: 4px; }
+  .headline-balance .value { font-size: 26px; font-weight: 700; font-family: var(--font-mono); }
+  .headline-balance .value.pos { color: var(--pos); }
+  .headline-balance .value.neg { color: var(--neg); }
 </style>
 
 <div class="wrap">
@@ -295,6 +307,11 @@
     <h1>Живой журнал сделок</h1>
     <div class="meta-line">Данные из логов Railway (события TP/стоп/трейлинг), собрано на <b id="generatedAt"></b></div>
   </header>
+
+  <div class="headline-balance" id="headlineBalance" style="display:none">
+    <div class="label" id="headlineBalanceLabel"></div>
+    <div class="value" id="headlineBalanceValue"></div>
+  </div>
 
   <div class="note">
     <b>Важно:</b> в проде логируются только события ВЫХОДА (TP1-3, стоп, трейлинг-закрытие) — момент входа в сделку нигде не пишется в лог. Первая колонка с датой в каждой строке — это время ПЕРВОГО известного события по позиции (обычно TP1 или стоп), не факт открытия сделки. Позиции без строки "выход" — ещё открыты на момент сборки отчёта.
@@ -476,6 +493,14 @@ function renderEvents(el, ev, ex, s) {
 }
 
 document.getElementById('generatedAt').textContent = DATA.generated_at;
+if (DATA.equity) {
+  const eqHead = DATA.equity;
+  document.getElementById('headlineBalance').style.display = '';
+  document.getElementById('headlineBalanceLabel').textContent = 'Сводный баланс без первых суток';
+  const headVal = document.getElementById('headlineBalanceValue');
+  headVal.textContent = eqHead.equity_after_first_day.toFixed(2) + ' USDT (' + fmtPnl(eqHead.equity_after_first_day_pct) + '% к 10000)';
+  headVal.className = 'value ' + (eqHead.equity_after_first_day_pct >= 0 ? 'pos' : 'neg');
+}
 if (DATA.equity) {
   const eq = DATA.equity;
   document.getElementById('section-equity').style.display = '';
