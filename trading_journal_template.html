@@ -360,21 +360,9 @@ function cell(v) {
   return v ? v : '<span class="dash">—</span>';
 }
 
-// Кликабельная сортировка таблиц: клик по заголовку — сортировка по возрастанию,
-// повторный клик по тому же заголовку — переключает на убывание. Каждая из трёх
-// таблиц (после первых суток / 24ч / с обнуления) сортируется независимо.
-// "Статус" сортируется по тексту (ОТКРЫТА/Стоп/Трейлинг (TP4)/Таймаут 24ч) --
-// одинаковые статусы естественным образом группируются рядом.
-const SORT_COLUMNS = [
-  { key: null, label: '#' },
-  { key: 'symbol', label: 'Монета', type: 'string' },
-  { key: 'tp1', label: 'TP1', type: 'date' },
-  { key: 'tp2', label: 'TP2', type: 'date' },
-  { key: 'tp3', label: 'TP3', type: 'date' },
-  { key: 'exit_ts', label: 'Выход', type: 'date' },
-  { key: '_status', label: 'Статус', type: 'string' },
-  { key: 'pnl', label: 'PnL, $', type: 'number', num: true },
-];
+// Кликабельная сортировка: клик по заголовку колонки сортирует таблицу по ней,
+// повторный клик по тому же заголовку — переключает направление. Сама таблица
+// (колонки, их порядок, разметка строк) не меняется — только заголовки кликабельны.
 const TABLE_DATA = {};
 const SORT_STATE = {};
 
@@ -387,34 +375,30 @@ function parseDT(s) {
   return mm * 1e6 + dd * 1e4 + HH * 1e2 + MM;
 }
 
-function statusValue(p) {
-  return p.open ? 'ОТКРЫТА' : p.exit_type;
-}
-
 function sortValueOf(p, col) {
-  if (col.key === '_status') return statusValue(p);
-  if (col.type === 'date') return parseDT(p[col.key]);
-  return p[col.key];
+  if (col === 'status') return p.open ? 'ОТКРЫТА' : p.exit_type;
+  if (col === 'symbol') return p.symbol;
+  if (col === 'pnl') return p.pnl;
+  return parseDT(p[col]); // tp1 / tp2 / tp3 / exit_ts
 }
 
-function onSortClick(tableId, colIndex) {
-  const state = SORT_STATE[tableId] || { colIndex: null, dir: 1 };
-  if (state.colIndex === colIndex) state.dir *= -1;
-  else { state.colIndex = colIndex; state.dir = 1; }
+function onSortClick(tableId, col) {
+  const state = SORT_STATE[tableId] || { col: null, dir: 1 };
+  if (state.col === col) state.dir *= -1;
+  else { state.col = col; state.dir = 1; }
   SORT_STATE[tableId] = state;
   renderTable(document.getElementById(tableId), TABLE_DATA[tableId]);
 }
 
 function renderTable(el, positions) {
   TABLE_DATA[el.id] = positions;
-  const state = SORT_STATE[el.id] || { colIndex: null, dir: 1 };
+  const state = SORT_STATE[el.id] || { col: null, dir: 1 };
   SORT_STATE[el.id] = state;
 
   let list = positions;
-  if (state.colIndex !== null) {
-    const col = SORT_COLUMNS[state.colIndex];
+  if (state.col) {
     list = positions.slice().sort((a, b) => {
-      let va = sortValueOf(a, col), vb = sortValueOf(b, col);
+      let va = sortValueOf(a, state.col), vb = sortValueOf(b, state.col);
       const na = va === null || va === undefined, nb = vb === null || vb === undefined;
       if (na && nb) return 0;
       if (na) return 1;   // пустые значения -- всегда в конец, независимо от направления
@@ -440,15 +424,18 @@ function renderTable(el, positions) {
     </tr>`;
   }).join('');
 
-  const headCells = SORT_COLUMNS.map((col, i) => {
-    const sortable = col.key !== null;
-    const arrow = state.colIndex === i ? (state.dir === 1 ? ' ▲' : ' ▼') : '';
-    const classes = [col.num ? 'num' : '', sortable ? 'sortable' : ''].filter(Boolean).join(' ');
-    const onclick = sortable ? ` onclick="onSortClick('${el.id}', ${i})"` : '';
-    return `<th${classes ? ` class="${classes}"` : ''}${onclick}>${col.label}${arrow}</th>`;
-  }).join('');
-
-  el.innerHTML = `<thead><tr>${headCells}</tr></thead><tbody>${rows}</tbody>`;
+  const arrow = (col) => state.col === col ? (state.dir === 1 ? ' ▲' : ' ▼') : '';
+  const id = el.id;
+  el.innerHTML = `<thead><tr>
+    <th class="num">#</th>
+    <th class="sortable" onclick="onSortClick('${id}','symbol')">Монета${arrow('symbol')}</th>
+    <th class="sortable" onclick="onSortClick('${id}','tp1')">TP1${arrow('tp1')}</th>
+    <th class="sortable" onclick="onSortClick('${id}','tp2')">TP2${arrow('tp2')}</th>
+    <th class="sortable" onclick="onSortClick('${id}','tp3')">TP3${arrow('tp3')}</th>
+    <th class="sortable" onclick="onSortClick('${id}','exit_ts')">Выход${arrow('exit_ts')}</th>
+    <th class="sortable" onclick="onSortClick('${id}','status')">Статус${arrow('status')}</th>
+    <th class="num sortable" onclick="onSortClick('${id}','pnl')">PnL, $${arrow('pnl')}</th>
+  </tr></thead><tbody>${rows}</tbody>`;
 }
 
 function renderStats(el, s) {
