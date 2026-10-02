@@ -180,6 +180,13 @@ def test_rendered_html_contains_stops_and_take_profit_section():
     assert "Стопы и take profit" in html
 
 
+def test_rendered_html_has_clickable_sortable_table_columns():
+    html = tjr.render_journal_html(tjr.build_journal_data(_events(), NOW, reset_at="x"))
+
+    assert "onSortClick" in html
+    assert "thead th.sortable" in html  # CSS-класс курсора/ховера для кликабельных заголовков
+
+
 def test_summary_text_shows_tp_legs_vs_stops_for_both_periods():
     data = tjr.build_journal_data(_events(), NOW, reset_at="x")
     text = tjr.format_summary(data, balance=10000.0)

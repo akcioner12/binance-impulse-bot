@@ -218,6 +218,9 @@
     white-space: nowrap;
   }
 
+  thead th.sortable { cursor: pointer; user-select: none; }
+  thead th.sortable:hover { color: var(--ink); }
+
   th.num, td.num { text-align: right; }
 
   tbody td {
@@ -357,8 +360,73 @@ function cell(v) {
   return v ? v : '<span class="dash">—</span>';
 }
 
+// Кликабельная сортировка таблиц: клик по заголовку — сортировка по возрастанию,
+// повторный клик по тому же заголовку — переключает на убывание. Каждая из трёх
+// таблиц (после первых суток / 24ч / с обнуления) сортируется независимо.
+// "Статус" сортируется по тексту (ОТКРЫТА/Стоп/Трейлинг (TP4)/Таймаут 24ч) --
+// одинаковые статусы естественным образом группируются рядом.
+const SORT_COLUMNS = [
+  { key: null, label: '#' },
+  { key: 'symbol', label: 'Монета', type: 'string' },
+  { key: 'tp1', label: 'TP1', type: 'date' },
+  { key: 'tp2', label: 'TP2', type: 'date' },
+  { key: 'tp3', label: 'TP3', type: 'date' },
+  { key: 'exit_ts', label: 'Выход', type: 'date' },
+  { key: '_status', label: 'Статус', type: 'string' },
+  { key: 'pnl', label: 'PnL, $', type: 'number', num: true },
+];
+const TABLE_DATA = {};
+const SORT_STATE = {};
+
+function parseDT(s) {
+  // "дд.мм ЧЧ:ММ" (без года) -> сравнимое число мм-дд-чч-мм
+  if (!s) return null;
+  const [datePart, timePart] = s.split(' ');
+  const [dd, mm] = datePart.split('.').map(Number);
+  const [HH, MM] = timePart.split(':').map(Number);
+  return mm * 1e6 + dd * 1e4 + HH * 1e2 + MM;
+}
+
+function statusValue(p) {
+  return p.open ? 'ОТКРЫТА' : p.exit_type;
+}
+
+function sortValueOf(p, col) {
+  if (col.key === '_status') return statusValue(p);
+  if (col.type === 'date') return parseDT(p[col.key]);
+  return p[col.key];
+}
+
+function onSortClick(tableId, colIndex) {
+  const state = SORT_STATE[tableId] || { colIndex: null, dir: 1 };
+  if (state.colIndex === colIndex) state.dir *= -1;
+  else { state.colIndex = colIndex; state.dir = 1; }
+  SORT_STATE[tableId] = state;
+  renderTable(document.getElementById(tableId), TABLE_DATA[tableId]);
+}
+
 function renderTable(el, positions) {
-  let rows = positions.map((p, i) => {
+  TABLE_DATA[el.id] = positions;
+  const state = SORT_STATE[el.id] || { colIndex: null, dir: 1 };
+  SORT_STATE[el.id] = state;
+
+  let list = positions;
+  if (state.colIndex !== null) {
+    const col = SORT_COLUMNS[state.colIndex];
+    list = positions.slice().sort((a, b) => {
+      let va = sortValueOf(a, col), vb = sortValueOf(b, col);
+      const na = va === null || va === undefined, nb = vb === null || vb === undefined;
+      if (na && nb) return 0;
+      if (na) return 1;   // пустые значения -- всегда в конец, независимо от направления
+      if (nb) return -1;
+      if (typeof va === 'string') { va = va.toLowerCase(); vb = vb.toLowerCase(); }
+      if (va < vb) return -1 * state.dir;
+      if (va > vb) return 1 * state.dir;
+      return 0;
+    });
+  }
+
+  let rows = list.map((p, i) => {
     const cls = p.open ? '' : (p.pnl > 0 ? 'win' : 'loss');
     return `<tr class="${cls}">
       <td class="idx num">${i + 1}</td>
@@ -372,16 +440,15 @@ function renderTable(el, positions) {
     </tr>`;
   }).join('');
 
-  el.innerHTML = `<thead><tr>
-    <th class="num">#</th>
-    <th>Монета</th>
-    <th>TP1</th>
-    <th>TP2</th>
-    <th>TP3</th>
-    <th>Выход</th>
-    <th>Статус</th>
-    <th class="num">PnL, $</th>
-  </tr></thead><tbody>${rows}</tbody>`;
+  const headCells = SORT_COLUMNS.map((col, i) => {
+    const sortable = col.key !== null;
+    const arrow = state.colIndex === i ? (state.dir === 1 ? ' ▲' : ' ▼') : '';
+    const classes = [col.num ? 'num' : '', sortable ? 'sortable' : ''].filter(Boolean).join(' ');
+    const onclick = sortable ? ` onclick="onSortClick('${el.id}', ${i})"` : '';
+    return `<th${classes ? ` class="${classes}"` : ''}${onclick}>${col.label}${arrow}</th>`;
+  }).join('');
+
+  el.innerHTML = `<thead><tr>${headCells}</tr></thead><tbody>${rows}</tbody>`;
 }
 
 function renderStats(el, s) {
