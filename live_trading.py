@@ -910,19 +910,23 @@ CHANNEL_DIRECTION_TO_DETECTOR_DIRECTION = {
 }
 
 
-async def _resolve_channel_signal_exchange(session, symbol: str) -> str | None:
+def _resolve_channel_signal_exchange(symbol: str) -> str | None:
     """
-    Резолвит биржу для сигнала стороннего канала без полного списка пар (в отличие
-    от собственного детектора, который уже подписан на все торгуемые символы) --
-    один лёгкий запрос свечи на каждую биржу по очереди, Binance в приоритете.
+    Резолвит биржу для сигнала стороннего канала СРЕДИ символов, которые бот
+    реально отслеживает по WS (main.get_symbols_for_report) -- не любой символ,
+    для которого биржа отдаёт REST-свечу: если создать pending-сетап на монету,
+    по которой не идут тики (ниже порога объёма, вне текущей подписки),
+    _process_pending_setup_tick никогда его не продвинет (тики приходят только
+    из on_kline_close) -- сетап застрянет навсегда и будет блокировать символ.
+    Binance в приоритете; Bybit -- только уникальный набор (bybit_only), т.к.
+    пересекающиеся с Binance символы с Bybit не транслируются (см. main.py).
     """
-    for exchange in ("Binance", "Bybit"):
-        try:
-            candles = await market_data.fetch_klines(session, exchange, symbol, "1h", limit=1)
-        except Exception:
-            continue
-        if candles:
-            return exchange
+    import main  # ленивый импорт -- main.py импортирует live_trading на верхнем уровне
+    binance_symbols, bybit_only_symbols = main.get_symbols_for_report()
+    if symbol in binance_symbols:
+        return "Binance"
+    if symbol in bybit_only_symbols:
+        return "Bybit"
     return None
 
 
@@ -954,9 +958,9 @@ async def handle_channel_signal(session, chat_id: int, ticker: str, channel_dire
     _reserved_symbols.add(symbol)
 
     try:
-        exchange = await _resolve_channel_signal_exchange(session, symbol)
+        exchange = _resolve_channel_signal_exchange(symbol)
         if exchange is None:
-            logger.info(f"Сигнал канала [{symbol}]: монета не найдена на Binance/Bybit фьючерсах, пропуск")
+            logger.info(f"Сигнал канала [{symbol}]: монета не отслеживается ботом (нет в текущей WS-подписке), пропуск")
             return None
 
         candles_15m = await market_data.fetch_klines(session, exchange, symbol, "15m", limit=50)

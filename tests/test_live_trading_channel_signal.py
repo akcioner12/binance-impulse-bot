@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, patch
 
 import live_trading
+import main
 
 
 def setup_function():
@@ -83,12 +84,25 @@ async def test_handle_channel_signal_none_when_at_max_concurrent_trades():
 async def test_handle_channel_signal_none_when_symbol_not_found_on_either_exchange():
     with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
-         patch("live_trading.market_data.fetch_klines", new=AsyncMock(return_value=[])):
+         patch("main.get_symbols_for_report", return_value=([], [])):
         result = await live_trading.handle_channel_signal(
             session=None, chat_id=111, ticker="NOPE", channel_direction="short",
         )
     assert result is None
     assert "NOPEUSDT" not in live_trading._reserved_symbols  # слот освобождён
+
+
+def test_resolve_channel_signal_exchange_checks_tracked_symbols_not_rest():
+    """
+    Критично (код-ревью финальной ветки): если резолвить биржу по сырому REST-
+    ответу, а не по реально отслеживаемым ботом символам, pending-сетап можно
+    создать на монету, по которой WS не шлёт тиков -- он застрянет навсегда
+    (_process_pending_setup_tick двигается только тиками из on_kline_close).
+    """
+    with patch("main.get_symbols_for_report", return_value=(["XAIUSDT"], ["ZKJUSDT"])):
+        assert live_trading._resolve_channel_signal_exchange("XAIUSDT") == "Binance"
+        assert live_trading._resolve_channel_signal_exchange("ZKJUSDT") == "Bybit"
+        assert live_trading._resolve_channel_signal_exchange("NOPEUSDT") is None
 
 
 def _candle(close, high=None, low=None):
@@ -111,8 +125,8 @@ def _klines_with_atr(n=60, base=1.0):
 async def test_handle_channel_signal_none_when_atr_unavailable():
     with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("main.get_symbols_for_report", return_value=(["XAIUSDT"], [])), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=[
-             [_candle(1.0)],   # _resolve_channel_signal_exchange: Binance -- найдено
              [_candle(1.0)] * 2,  # candles_15m: слишком мало для ATR(14)
              [_candle(1.0)] * 2,  # candles_1h: слишком мало для ATR(14)
          ])):
@@ -128,8 +142,8 @@ async def test_handle_channel_signal_short_maps_to_pump_risk_and_executes():
     klines_15m = _klines_with_atr(n=50)
     with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("main.get_symbols_for_report", return_value=(["XAIUSDT"], [])), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=[
-             [klines_1h[-1]],  # резолв биржи -- Binance
              klines_15m, klines_1h,  # ATR
              [], [],  # daily/weekly для magnet_levels
          ])), \
@@ -156,8 +170,8 @@ async def test_handle_channel_signal_long_maps_to_dump_risk_direction():
     klines_15m = _klines_with_atr(n=50)
     with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("main.get_symbols_for_report", return_value=(["CELOUSDT"], [])), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=[
-             [klines_1h[-1]],
              klines_15m, klines_1h,
              [], [],
          ])), \
@@ -179,9 +193,8 @@ async def test_handle_channel_signal_resolves_bybit_when_not_on_binance():
     klines_15m = _klines_with_atr(n=50)
     with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("main.get_symbols_for_report", return_value=([], ["ZKJUSDT"])), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=[
-             [],              # Binance -- не найдено
-             [klines_1h[-1]],  # Bybit -- найдено
              klines_15m, klines_1h,
              [], [],
          ])), \

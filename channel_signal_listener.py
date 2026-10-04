@@ -31,24 +31,42 @@ async def on_channel_message(session, text: str | None) -> dict | None:
 
 
 async def run_channel_signal_listener():
-    """Подключается к Telegram под пользовательской сессией и слушает
-    CHANNEL_SIGNAL_SOURCE_ID. Обрыв соединения -- переподключение через 30с,
-    не роняя остальные задачи asyncio.gather в main.py."""
-    client = TelegramClient(TG_CHANNEL_SESSION_PATH, TG_API_ID, TG_API_HASH)
-
-    @client.on(events.NewMessage(chats=CHANNEL_SIGNAL_SOURCE_ID))
-    async def _handler(event):
-        async with aiohttp.ClientSession() as session:
-            try:
-                await on_channel_message(session, event.message.text)
-            except Exception as e:
-                logger.error(f"channel_signal: ошибка обработки сообщения: {e}")
-
+    """
+    Подключается к Telegram под пользовательской сессией и слушает
+    CHANNEL_SIGNAL_SOURCE_ID. Клиент создаётся заново на каждой итерации цикла
+    (перечитывает файл сессии с диска) -- если сессия ещё не авторизована
+    (auth_channel_session.py не запускали или сессия протухла), НЕ вызываем
+    интерактивный запуск клиента: на Railway без stdin это либо падает с
+    EOFError, либо (если stdin почему-то открыт) блокирует весь event loop на
+    input() за номером телефона. Вместо этого connect() + is_user_authorized()
+    и ожидание следующей проверки -- после ручного запуска auth-скрипта
+    следующая итерация подхватит валидную сессию сама, без рестарта сервиса.
+    """
     while True:
+        client = TelegramClient(TG_CHANNEL_SESSION_PATH, TG_API_ID, TG_API_HASH)
         try:
-            await client.start()
+            await client.connect()
+            if not await client.is_user_authorized():
+                logger.warning(
+                    "channel_signal_listener: сессия не авторизована -- запусти "
+                    "auth_channel_session.py (railway ssh), повторная проверка через 5 минут"
+                )
+                await client.disconnect()
+                await asyncio.sleep(300)
+                continue
+
+            @client.on(events.NewMessage(chats=CHANNEL_SIGNAL_SOURCE_ID))
+            async def _handler(event):
+                async with aiohttp.ClientSession() as session:
+                    try:
+                        await on_channel_message(session, event.message.raw_text)
+                    except Exception as e:
+                        logger.exception(f"channel_signal: ошибка обработки сообщения: {e}")
+
             logger.info("channel_signal_listener: подключен, слушаю канал")
             await client.run_until_disconnected()
         except Exception as e:
-            logger.error(f"channel_signal_listener: соединение оборвалось, переподключение через 30с: {e}")
-            await asyncio.sleep(30)
+            logger.exception(f"channel_signal_listener: соединение оборвалось: {e}")
+        finally:
+            await client.disconnect()
+        await asyncio.sleep(30)
