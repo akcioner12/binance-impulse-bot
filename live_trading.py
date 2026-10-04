@@ -902,3 +902,62 @@ def _handle_part_fill(setup: dict, symbol: str, price: float) -> None:
         "fill_stage": fill_stage,
     }
     trading_storage.update_trade_signal_status(setup["signal_id"], "executed")
+
+
+CHANNEL_DIRECTION_TO_DETECTOR_DIRECTION = {
+    "short": "up", "шорт": "up",
+    "long": "down", "лонг": "down",
+}
+
+
+async def _resolve_channel_signal_exchange(session, symbol: str) -> str | None:
+    """
+    Резолвит биржу для сигнала стороннего канала без полного списка пар (в отличие
+    от собственного детектора, который уже подписан на все торгуемые символы) --
+    один лёгкий запрос свечи на каждую биржу по очереди, Binance в приоритете.
+    """
+    for exchange in ("Binance", "Bybit"):
+        try:
+            candles = await market_data.fetch_klines(session, exchange, symbol, "1h", limit=1)
+        except Exception:
+            continue
+        if candles:
+            return exchange
+    return None
+
+
+async def handle_channel_signal(session, chat_id: int, ticker: str, channel_direction: str) -> dict | None:
+    """
+    Вызывается из channel_signal_listener.on_channel_message при распознанном
+    сигнале стороннего Telegram-канала (см. docs/superpowers/specs/2026-10-04-
+    channel-signal-autotrading-design.md). SHORT канала -> фейд пампа
+    (direction="up", риск как у пампа), LONG -> фейд дампа (direction="down",
+    риск как у дампа) -- исполнение идёт через тот же execute_setup(
+    classification="reversal", ...), что и органические сигналы: стоп/TP-сетка/
+    трейлинг не меняются.
+    """
+    direction = CHANNEL_DIRECTION_TO_DETECTOR_DIRECTION.get(channel_direction.lower())
+    if direction is None:
+        return None
+
+    symbol = f"{ticker.upper()}USDT"
+
+    profile = trading_storage.get_profile(chat_id)
+    if profile is None or not profile["is_active"]:
+        return None
+    if symbol in SYMBOL_BLACKLIST:
+        return None
+    if symbol in _pending_setups or symbol in _open_positions or symbol in _reserved_symbols:
+        return None
+    if len(trading_storage.get_open_positions(chat_id)) + len(_reserved_symbols) >= profile["max_concurrent_trades"]:
+        return None
+    _reserved_symbols.add(symbol)
+
+    try:
+        exchange = await _resolve_channel_signal_exchange(session, symbol)
+        if exchange is None:
+            logger.info(f"Сигнал канала [{symbol}]: монета не найдена на Binance/Bybit фьючерсах, пропуск")
+            return None
+        return None  # TODO (Task 3 Step 8): исполнение добавится следующим шагом
+    finally:
+        _reserved_symbols.discard(symbol)
