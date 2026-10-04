@@ -36,6 +36,7 @@ from commands import run_command_listener
 from daily_report import daily_report_loop
 from trading_journal_report import trading_journal_report_loop, load_seed_events
 from journal_web import run_web_server
+from channel_signal_listener import run_channel_signal_listener
 from storage import init_db, get_all_subscribers, upsert_alert_state, clear_alert_state, get_alert_state, get_all_active_symbols
 from trading_storage import init_trading_db, init_paper_trading_db, expire_all_pending_signals, seed_trade_events_if_empty
 import live_trading
@@ -420,6 +421,7 @@ async def main():
             daily_report_loop(get_symbols_for_report, get_all_subscribers),
             trading_journal_report_loop(ADMIN_CHAT_ID),
             run_web_server(int(os.getenv("PORT", "8080"))),
+            run_channel_signal_listener(),
         )
 
 
