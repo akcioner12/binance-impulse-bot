@@ -56,3 +56,23 @@ def test_listener_does_not_call_blocking_interactive_start():
     source = inspect.getsource(channel_signal_listener.run_channel_signal_listener)
     assert "is_user_authorized" in source
     assert "client.start()" not in source
+
+
+class _StopLoop(Exception):
+    """Сигнал для теста остановить бесконечный retry-цикл после первой итерации."""
+
+
+@pytest.mark.asyncio
+async def test_listener_does_not_crash_whole_bot_when_credentials_missing():
+    """
+    Регрессия прод-инцидента 04.10 (деплой f5c1c579, CRASHED): TelegramClient(...)
+    кидает ValueError СИНХРОННО в конструкторе при пустых TG_API_ID/TG_API_HASH --
+    если создавать клиента вне try/except, исключение валит весь
+    asyncio.gather(...) в main.py и роняет ВЕСЬ бот (торговый цикл, команды,
+    отчёты, веб-журнал), а не только листенер канала.
+    """
+    with patch("channel_signal_listener.TG_API_ID", 0), \
+         patch("channel_signal_listener.TG_API_HASH", ""), \
+         patch("channel_signal_listener.asyncio.sleep", new=AsyncMock(side_effect=_StopLoop)):
+        with pytest.raises(_StopLoop):
+            await channel_signal_listener.run_channel_signal_listener()

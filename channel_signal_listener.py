@@ -43,15 +43,22 @@ async def run_channel_signal_listener():
     следующая итерация подхватит валидную сессию сама, без рестарта сервиса.
     """
     while True:
-        client = TelegramClient(TG_CHANNEL_SESSION_PATH, TG_API_ID, TG_API_HASH)
+        client = None
         try:
+            if not TG_API_ID or not TG_API_HASH:
+                logger.warning(
+                    "channel_signal_listener: TG_API_ID/TG_API_HASH не заданы, повторная проверка через 5 минут"
+                )
+                await asyncio.sleep(300)
+                continue
+
+            client = TelegramClient(TG_CHANNEL_SESSION_PATH, TG_API_ID, TG_API_HASH)
             await client.connect()
             if not await client.is_user_authorized():
                 logger.warning(
                     "channel_signal_listener: сессия не авторизована -- запусти "
                     "auth_channel_session.py (railway ssh), повторная проверка через 5 минут"
                 )
-                await client.disconnect()
                 await asyncio.sleep(300)
                 continue
 
@@ -68,5 +75,6 @@ async def run_channel_signal_listener():
         except Exception as e:
             logger.exception(f"channel_signal_listener: соединение оборвалось: {e}")
         finally:
-            await client.disconnect()
+            if client is not None:
+                await client.disconnect()
         await asyncio.sleep(30)
