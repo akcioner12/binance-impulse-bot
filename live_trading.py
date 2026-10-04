@@ -958,6 +958,39 @@ async def handle_channel_signal(session, chat_id: int, ticker: str, channel_dire
         if exchange is None:
             logger.info(f"Сигнал канала [{symbol}]: монета не найдена на Binance/Bybit фьючерсах, пропуск")
             return None
-        return None  # TODO (Task 3 Step 8): исполнение добавится следующим шагом
+
+        candles_15m = await market_data.fetch_klines(session, exchange, symbol, "15m", limit=50)
+        candles_1h = await market_data.fetch_klines(session, exchange, symbol, "1h", limit=24)
+        if not candles_1h:
+            return None
+        current_price = candles_1h[-1]["close"]
+
+        atr_15m_values = indicators.atr(candles_15m, period=14)
+        atr_1h_values = indicators.atr(candles_1h, period=14)
+        atr_15m = atr_15m_values[-1] if atr_15m_values else None
+        atr_1h = atr_1h_values[-1] if atr_1h_values else None
+        if not atr_15m or not atr_1h:
+            return None
+
+        daily_candles = await market_data.fetch_klines(session, exchange, symbol, "1d", limit=90)
+        weekly_candles = await market_data.fetch_klines(session, exchange, symbol, "1w", limit=52)
+        magnet_levels = magnet_levels_module.find_magnet_levels(daily_candles, weekly_candles, current_price, direction)
+
+        signal_id = trading_storage.create_trade_signal(
+            chat_id=chat_id, symbol=symbol, exchange=exchange,
+            impulse_direction=direction, classification="reversal", source="channel",
+        )
+
+        direction_label = "🔴 SHORT" if direction == "up" else "🟢 LONG"
+        await send_text(
+            session, chat_id,
+            f"📡 Сигнал из канала: *{ticker.upper()}* {direction_label} — вхожу по нашей стратегии...",
+        )
+
+        analysis = {"atr_1h": atr_1h, "atr_15m": atr_15m, "magnet_levels": magnet_levels}
+        return await execute_setup(
+            session, chat_id, symbol, exchange, direction, "reversal",
+            current_price, current_price, profile, analysis, signal_id,
+        )
     finally:
         _reserved_symbols.discard(symbol)
