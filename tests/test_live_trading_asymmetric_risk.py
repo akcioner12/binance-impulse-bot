@@ -12,10 +12,16 @@ def setup_function():
     live_trading._open_positions.clear()
 
 
-def test_pump_risk_reduced_to_1_percent_while_dump_stays_4_percent():
-    """20.09.2026: живые пампы -0.45R за 5 дней (n=41) -- вдвое меньше риск, пока не разберёмся; дампы в норме."""
+def test_pump_risk_1_percent_dump_risk_2_percent():
+    """
+    20.09.2026: живые пампы -0.45R за 5 дней (n=41) -- вдвое меньше риск, пока не разберёмся.
+    05.10.2026: дамп-риск снижен с 4% до 2% -- с 24.09 (тихий рынок) дампы дали -3396.65
+    на риске 4%, тот же набор сделок на 2% дал бы -1698.33 (в 2 раза меньше потерь,
+    R-эдж не меняется от размера позиции). Вернуть на 4%, когда волатильность/винрейт
+    дампов восстановятся (см. docs/LOGIC_CHANGELOG.md).
+    """
     assert live_trading.PUMP_RISK_PERCENT == 1.0
-    assert live_trading.DUMP_RISK_PERCENT == 4.0
+    assert live_trading.DUMP_RISK_PERCENT == 2.0
 
 
 def test_risk_percent_for_pump_direction():
