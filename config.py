@@ -49,3 +49,9 @@ SYMBOLS_PER_WS_CONNECTION = 150
 # Bybit ограничивает число args в одной WS-подписке (обычно 10 в одном пакете подписки,
 # но можно отправлять несколько пакетов подряд через одно соединение)
 BYBIT_SYMBOLS_PER_SUBSCRIBE_BATCH = 10
+
+# --- Сигналы стороннего Telegram-канала (см. docs/superpowers/specs/2026-10-04-...) ---
+CHANNEL_SIGNAL_SOURCE_ID = int(os.getenv("CHANNEL_SIGNAL_SOURCE_ID", "-1002487960768"))
+TG_API_ID = int(os.getenv("TG_API_ID", "0"))
+TG_API_HASH = os.getenv("TG_API_HASH", "")
+TG_CHANNEL_SESSION_PATH = os.getenv("TG_CHANNEL_SESSION_PATH", "/data/channel_signal")
