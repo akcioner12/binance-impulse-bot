@@ -149,6 +149,20 @@ def _ensure_position_recovery_columns(conn):
             conn.execute(f"ALTER TABLE positions ADD COLUMN {column} {sql_type}")
 
 
+_TRADE_SIGNAL_COLUMNS = {
+    "source": "TEXT NOT NULL DEFAULT 'analyzer'",
+}
+
+
+def _ensure_trade_signal_columns(conn):
+    """Аналогично _ensure_position_recovery_columns -- добавляет колонку source
+    на уже развёрнутой в проде БД, где таблица trade_signals создана раньше этой фичи."""
+    existing = {row["name"] for row in conn.execute("PRAGMA table_info(trade_signals)")}
+    for column, sql_type in _TRADE_SIGNAL_COLUMNS.items():
+        if column not in existing:
+            conn.execute(f"ALTER TABLE trade_signals ADD COLUMN {column} {sql_type}")
+
+
 def init_paper_trading_db():
     with get_conn() as conn:
         conn.execute("""
@@ -188,6 +202,7 @@ def init_paper_trading_db():
                 created_at TEXT DEFAULT CURRENT_TIMESTAMP
             )
         """)
+        _ensure_trade_signal_columns(conn)
         conn.execute("""
             CREATE TABLE IF NOT EXISTS trade_events (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -414,13 +429,14 @@ def had_recent_stop_out(chat_id: int, symbol: str, direction: str, since: str) -
 
 
 def create_trade_signal(
-    chat_id: int, symbol: str, exchange: str, impulse_direction: str, classification: str
+    chat_id: int, symbol: str, exchange: str, impulse_direction: str, classification: str,
+    source: str = "analyzer",
 ) -> int:
     with get_conn() as conn:
         cursor = conn.execute("""
-            INSERT INTO trade_signals (chat_id, symbol, exchange, impulse_direction, classification)
-            VALUES (?, ?, ?, ?, ?)
-        """, (chat_id, symbol, exchange, impulse_direction, classification))
+            INSERT INTO trade_signals (chat_id, symbol, exchange, impulse_direction, classification, source)
+            VALUES (?, ?, ?, ?, ?, ?)
+        """, (chat_id, symbol, exchange, impulse_direction, classification, source))
         conn.commit()
         return cursor.lastrowid
 

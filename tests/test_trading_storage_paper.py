@@ -53,6 +53,53 @@ def test_reset_paper_trading_works_when_balance_not_previously_initialized():
     assert trading_storage.get_paper_balance(111) == 10000.0
 
 
+import storage
+
+
+def test_create_trade_signal_defaults_source_to_analyzer():
+    signal_id = trading_storage.create_trade_signal(
+        chat_id=111, symbol="BTCUSDT", exchange="Binance",
+        impulse_direction="up", classification="reversal",
+    )
+    row = trading_storage.get_trade_signal(signal_id)
+    assert row["source"] == "analyzer"
+
+
+def test_create_trade_signal_accepts_explicit_source():
+    signal_id = trading_storage.create_trade_signal(
+        chat_id=111, symbol="XAIUSDT", exchange="Binance",
+        impulse_direction="up", classification="reversal", source="channel",
+    )
+    row = trading_storage.get_trade_signal(signal_id)
+    assert row["source"] == "channel"
+
+
+def test_init_paper_trading_db_adds_source_column_to_pre_existing_trade_signals_table():
+    """Защита уже развёрнутой в проде БД -- CREATE TABLE IF NOT EXISTS сам по себе
+    не добавит новую колонку на таблицу, которая уже существует без неё."""
+    with storage.get_conn() as conn:
+        conn.execute("DROP TABLE IF EXISTS trade_signals")
+        conn.execute("""
+            CREATE TABLE trade_signals (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                chat_id INTEGER NOT NULL,
+                symbol TEXT NOT NULL,
+                exchange TEXT NOT NULL,
+                impulse_direction TEXT NOT NULL,
+                classification TEXT NOT NULL,
+                status TEXT NOT NULL DEFAULT 'pending',
+                created_at TEXT DEFAULT CURRENT_TIMESTAMP
+            )
+        """)
+        conn.commit()
+
+    trading_storage.init_paper_trading_db()
+
+    with storage.get_conn() as conn:
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(trade_signals)")}
+    assert "source" in columns
+
+
 def test_reset_paper_trading_clears_open_positions():
     trading_storage.create_position(
         chat_id=111, symbol="BTCUSDT", exchange="Binance", direction="short",
