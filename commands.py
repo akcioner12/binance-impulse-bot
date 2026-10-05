@@ -118,6 +118,11 @@ async def _handle_command(session: aiohttp.ClientSession, chat_id: int, text: st
             return
         await _handle_close_position_command(session, chat_id, stripped)
 
+    elif stripped.startswith("/manual_signal"):
+        if chat_id != ADMIN_CHAT_ID:
+            return
+        await _handle_manual_signal_command(session, chat_id, stripped)
+
 
 async def _handle_emergency_command(session: aiohttp.ClientSession, chat_id: int):
     profile = trading_storage.get_profile(chat_id)
@@ -233,6 +238,30 @@ async def _handle_close_position_command(session: aiohttp.ClientSession, chat_id
         await send_text(session, chat_id, f"🔴 Закрытие {symbol} запущено (сработает на ближайшем тике).")
     else:
         await send_text(session, chat_id, f"Открытой позиции по {symbol} нет.")
+
+
+async def _handle_manual_signal_command(session: aiohttp.ClientSession, chat_id: int, stripped: str):
+    parts = stripped.split()
+    if len(parts) != 3:
+        await send_text(
+            session, chat_id,
+            "Использование: `/manual_signal TICKER long|short` (например, `/manual_signal BTW long`)",
+        )
+        return
+
+    ticker = parts[1].upper()
+    direction = parts[2]
+    if direction not in live_trading.CHANNEL_DIRECTION_TO_DETECTOR_DIRECTION:
+        await send_text(session, chat_id, "Направление должно быть `long` или `short`.")
+        return
+
+    result = await live_trading.handle_channel_signal(session, chat_id, ticker, direction)
+    if result is None:
+        await send_text(
+            session, chat_id,
+            f"Не удалось войти по {ticker} — уже есть позиция/ожидание по монете, монета не отслеживается, "
+            f"чёрный список или достигнут лимит одновременных сделок.",
+        )
 
 
 async def _handle_callback_query(session: aiohttp.ClientSession, callback_query: dict):
