@@ -15,7 +15,7 @@ import asyncio
 
 import qrcode
 from telethon import TelegramClient
-from telethon.errors import SessionPasswordNeededError
+from telethon.errors import SessionPasswordNeededError, PasswordHashInvalidError
 
 from config import TG_API_ID, TG_API_HASH, TG_CHANNEL_SESSION_PATH, CHANNEL_SIGNAL_SOURCE_ID
 
@@ -44,8 +44,13 @@ async def main():
                 print("QR истёк, обновляю...")
                 await qr_login.recreate()
             except SessionPasswordNeededError:
-                pw = input("На аккаунте включена двухфакторная аутентификация, введи облачный пароль: ")
-                await client.sign_in(password=pw)
+                while True:
+                    pw = input("На аккаунте включена двухфакторная аутентификация, введи облачный пароль: ")
+                    try:
+                        await client.sign_in(password=pw)
+                        break
+                    except PasswordHashInvalidError:
+                        print("Неверный пароль, попробуй ещё раз.")
                 break
 
     me = await client.get_me()
