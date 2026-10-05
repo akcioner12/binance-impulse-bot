@@ -11,6 +11,31 @@ def setup_function():
     live_trading._reserved_symbols.clear()
 
 
+def test_set_symbols_resolver_wires_main_state_correctly():
+    """
+    Регрессия 05.10: прод падал с "монета не отслеживается" для ЛЮБОГО
+    канального сигнала (BTWUSDT), т.к. _resolve_channel_signal_exchange делал
+    `import main` внутри функции -- прод запускается как `python main.py`
+    (__name__ == "__main__"), и `import main` создаёт ОТДЕЛЬНЫЙ пустой модуль
+    "main" в sys.modules, никак не связанный с реально работающим процессом
+    (у которого main._active_symbols реально заполнен collectors_supervisor()).
+    Юнит-тесты этого не ловили, т.к. сами делают `import main` первыми и
+    патчат тот же фантомный модуль -- только явная проводка через
+    set_symbols_resolver() (как делает main.main() при старте) воспроизводит
+    реальный прод-путь данных.
+    """
+    main._active_symbols = {"REALUSDT"}
+    main._bybit_only_symbols = ["BYBITONLYUSDT"]
+    live_trading.set_symbols_resolver(main.get_symbols_for_report)
+    try:
+        assert live_trading._resolve_channel_signal_exchange("REALUSDT") == "Binance"
+        assert live_trading._resolve_channel_signal_exchange("BYBITONLYUSDT") == "Bybit"
+        assert live_trading._resolve_channel_signal_exchange("NOPEUSDT") is None
+    finally:
+        main._active_symbols = set()
+        main._bybit_only_symbols = []
+
+
 PROFILE = {"is_active": 1, "max_concurrent_trades": 3, "sl_method": "atr", "sl_fixed_percent": 2.0}
 
 
@@ -84,7 +109,7 @@ async def test_handle_channel_signal_none_when_at_max_concurrent_trades():
 async def test_handle_channel_signal_none_when_symbol_not_found_on_either_exchange():
     with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
-         patch("main.get_symbols_for_report", return_value=([], [])):
+         patch("live_trading._symbols_resolver", return_value=([], [])):
         result = await live_trading.handle_channel_signal(
             session=None, chat_id=111, ticker="NOPE", channel_direction="short",
         )
@@ -99,7 +124,7 @@ def test_resolve_channel_signal_exchange_checks_tracked_symbols_not_rest():
     создать на монету, по которой WS не шлёт тиков -- он застрянет навсегда
     (_process_pending_setup_tick двигается только тиками из on_kline_close).
     """
-    with patch("main.get_symbols_for_report", return_value=(["XAIUSDT"], ["ZKJUSDT"])):
+    with patch("live_trading._symbols_resolver", return_value=(["XAIUSDT"], ["ZKJUSDT"])):
         assert live_trading._resolve_channel_signal_exchange("XAIUSDT") == "Binance"
         assert live_trading._resolve_channel_signal_exchange("ZKJUSDT") == "Bybit"
         assert live_trading._resolve_channel_signal_exchange("NOPEUSDT") is None
@@ -125,7 +150,7 @@ def _klines_with_atr(n=60, base=1.0):
 async def test_handle_channel_signal_none_when_atr_unavailable():
     with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
-         patch("main.get_symbols_for_report", return_value=(["XAIUSDT"], [])), \
+         patch("live_trading._symbols_resolver", return_value=(["XAIUSDT"], [])), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=[
              [_candle(1.0)] * 2,  # candles_15m: слишком мало для ATR(14)
              [_candle(1.0)] * 2,  # candles_1h: слишком мало для ATR(14)
@@ -142,7 +167,7 @@ async def test_handle_channel_signal_short_maps_to_pump_risk_and_executes():
     klines_15m = _klines_with_atr(n=50)
     with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
-         patch("main.get_symbols_for_report", return_value=(["XAIUSDT"], [])), \
+         patch("live_trading._symbols_resolver", return_value=(["XAIUSDT"], [])), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=[
              klines_15m, klines_1h,  # ATR
              [], [],  # daily/weekly для magnet_levels
@@ -170,7 +195,7 @@ async def test_handle_channel_signal_long_maps_to_dump_risk_direction():
     klines_15m = _klines_with_atr(n=50)
     with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
-         patch("main.get_symbols_for_report", return_value=(["CELOUSDT"], [])), \
+         patch("live_trading._symbols_resolver", return_value=(["CELOUSDT"], [])), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=[
              klines_15m, klines_1h,
              [], [],
@@ -193,7 +218,7 @@ async def test_handle_channel_signal_resolves_bybit_when_not_on_binance():
     klines_15m = _klines_with_atr(n=50)
     with patch("live_trading.trading_storage.get_profile", return_value=PROFILE), \
          patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
-         patch("main.get_symbols_for_report", return_value=([], ["ZKJUSDT"])), \
+         patch("live_trading._symbols_resolver", return_value=([], ["ZKJUSDT"])), \
          patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=[
              klines_15m, klines_1h,
              [], [],

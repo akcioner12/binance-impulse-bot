@@ -37,6 +37,20 @@ _last_prices: dict[str, float] = {}  # последний тик по симво
 # для других символов видят актуальную занятость немедленно.
 _reserved_symbols: set[str] = set()
 
+# Резолвер списка реально отслеживаемых WS символов для сигналов стороннего
+# канала -- main.py регистрирует свою get_symbols_for_report() через
+# set_symbols_resolver() при старте. НЕ делать `import main` внутри функции:
+# прод запускается как `python main.py` (__name__ == "__main__"), и
+# `import main` создаёт ОТДЕЛЬНЫЙ пустой модуль "main" в sys.modules, не
+# связанный с реально работающим процессом -- 05.10.2026 из-за этого
+# _resolve_channel_signal_exchange всегда возвращал None для любой монеты.
+_symbols_resolver = None
+
+
+def set_symbols_resolver(resolver):
+    global _symbols_resolver
+    _symbols_resolver = resolver
+
 # Шаг, с которым обновляется ATR у долго ждущего сетапа. Триггеры считают
 # дистанцию отката от ATR на момент старта мониторинга -- если цена уходит
 # далеко без отката, эта величина устаревает относительно текущей волатильности
@@ -917,16 +931,16 @@ CHANNEL_DIRECTION_TO_DETECTOR_DIRECTION = {
 def _resolve_channel_signal_exchange(symbol: str) -> str | None:
     """
     Резолвит биржу для сигнала стороннего канала СРЕДИ символов, которые бот
-    реально отслеживает по WS (main.get_symbols_for_report) -- не любой символ,
-    для которого биржа отдаёт REST-свечу: если создать pending-сетап на монету,
-    по которой не идут тики (ниже порога объёма, вне текущей подписки),
-    _process_pending_setup_tick никогда его не продвинет (тики приходят только
-    из on_kline_close) -- сетап застрянет навсегда и будет блокировать символ.
-    Binance в приоритете; Bybit -- только уникальный набор (bybit_only), т.к.
-    пересекающиеся с Binance символы с Bybit не транслируются (см. main.py).
+    реально отслеживает по WS (через _symbols_resolver, см. set_symbols_resolver
+    выше) -- не любой символ, для которого биржа отдаёт REST-свечу: если
+    создать pending-сетап на монету, по которой не идут тики (ниже порога
+    объёма, вне текущей подписки), _process_pending_setup_tick никогда его не
+    продвинет (тики приходят только из on_kline_close) -- сетап застрянет
+    навсегда и будет блокировать символ. Binance в приоритете; Bybit -- только
+    уникальный набор (bybit_only), т.к. пересекающиеся с Binance символы с
+    Bybit не транслируются (см. main.py).
     """
-    import main  # ленивый импорт -- main.py импортирует live_trading на верхнем уровне
-    binance_symbols, bybit_only_symbols = main.get_symbols_for_report()
+    binance_symbols, bybit_only_symbols = _symbols_resolver()
     if symbol in binance_symbols:
         return "Binance"
     if symbol in bybit_only_symbols:

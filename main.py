@@ -413,6 +413,8 @@ async def main():
     global _started_at_monotonic
     _started_at_monotonic = time.monotonic()
 
+    live_trading.set_symbols_resolver(get_symbols_for_report)
+
     async with aiohttp.ClientSession() as cmd_session:
         await set_bot_commands(cmd_session, ADMIN_CHAT_ID)
         await asyncio.gather(
