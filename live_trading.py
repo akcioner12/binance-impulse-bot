@@ -400,6 +400,54 @@ async def _open_continuation_position(
     return {"classification": "continuation", "signal_id": signal_id, "position_id": result["position_id"]}
 
 
+async def _open_immediate_reversal_position(
+    session, chat_id: int, symbol: str, exchange: str, direction: str, current_price: float,
+    profile: dict, analysis: dict, signal_id: int,
+) -> dict:
+    """
+    Немедленный вход по текущей цене со стоп/TP-сеткой фейда (как у
+    _create_pending_reversal_setup), но БЕЗ ожидания триггера на откат --
+    для /manual_signal, когда сигнал по монете уже был дан и юзер явно просит
+    войти прямо сейчас, а не ждать отката, которого может и не случиться.
+    Полный размер сразу (без деления на part1/part2 и без multiwave-защиты --
+    это ручной оверрайд одного конкретного сигнала, не органический поток).
+    """
+    trade_direction = position_manager.determine_trade_direction(direction, "reversal")
+    stop_loss = position_manager.calculate_stop_loss(
+        current_price, trade_direction, profile["sl_method"],
+        analysis["atr_1h"], REVERSAL_ATR_MULTIPLIER, profile["sl_fixed_percent"],
+    )
+    balance = trading_storage.get_paper_balance(chat_id) or 0.0
+    size = position_manager.calculate_position_size(
+        balance, _risk_percent_for_direction(direction), current_price, stop_loss
+    )
+
+    result = order_executor.open_paper_position(
+        chat_id=chat_id, symbol=symbol, exchange=exchange, direction=trade_direction,
+        fills=[(current_price, size)], sl_method=profile["sl_method"],
+        atr_1h=analysis["atr_1h"], atr_multiplier=REVERSAL_ATR_MULTIPLIER,
+        fixed_percent=profile["sl_fixed_percent"], tp_split_preset=profile["tp_split_preset"],
+        breakeven_after_tp=profile["breakeven_after_tp"],
+    )
+    state = order_executor.OpenPositionState(
+        position_id=result["position_id"], direction=trade_direction,
+        avg_entry_price=result["avg_entry_price"], quantity=result["quantity"],
+        stop_loss=result["stop_loss"], take_profits=result["take_profits"],
+        breakeven_after_tp=profile["breakeven_after_tp"],
+    )
+    _open_positions[symbol] = {
+        "chat_id": chat_id, "state": state, "atr_1h": analysis["atr_1h"],
+        "opened_at": datetime.now(timezone.utc).replace(tzinfo=None),
+    }
+    trading_storage.update_trade_signal_status(signal_id, "executed")
+
+    snapshot = get_position_snapshot(symbol)
+    if snapshot is not None:
+        await send_text(session, chat_id, format_entry_report(symbol, exchange, snapshot))
+
+    return {"classification": "reversal", "signal_id": signal_id, "position_id": result["position_id"]}
+
+
 async def _create_pending_reversal_setup(
     session, chat_id: int, symbol: str, exchange: str, direction: str, current_price: float,
     window_start_price: float, profile: dict, analysis: dict, signal_id: int, size_multiplier: float = 1.0,
@@ -948,7 +996,9 @@ def _resolve_channel_signal_exchange(symbol: str) -> str | None:
     return None
 
 
-async def handle_channel_signal(session, chat_id: int, ticker: str, channel_direction: str) -> dict | None:
+async def handle_channel_signal(
+    session, chat_id: int, ticker: str, channel_direction: str, immediate: bool = False,
+) -> dict | None:
     """
     Вызывается из channel_signal_listener.on_channel_message при распознанном
     сигнале стороннего Telegram-канала (см. docs/superpowers/specs/2026-10-04-
@@ -956,7 +1006,11 @@ async def handle_channel_signal(session, chat_id: int, ticker: str, channel_dire
     (direction="up", риск как у пампа), LONG -> фейд дампа (direction="down",
     риск как у дампа) -- исполнение идёт через тот же execute_setup(
     classification="reversal", ...), что и органические сигналы: стоп/TP-сетка/
-    трейлинг не меняются.
+    трейлинг не меняются, вход ждёт отката (триггер part1/part2).
+
+    immediate=True (используется /manual_signal) -- пропускает ожидание
+    отката и открывает позицию сразу по текущей цене: для ручного
+    "догоняющего" входа в сигнал, который уже был дан, ждать отката не нужно.
     """
     direction = CHANNEL_DIRECTION_TO_DETECTOR_DIRECTION.get(channel_direction.lower())
     if direction is None:
@@ -1010,6 +1064,10 @@ async def handle_channel_signal(session, chat_id: int, ticker: str, channel_dire
         )
 
         analysis = {"atr_1h": atr_1h, "atr_15m": atr_15m, "magnet_levels": magnet_levels}
+        if immediate:
+            return await _open_immediate_reversal_position(
+                session, chat_id, symbol, exchange, direction, current_price, profile, analysis, signal_id,
+            )
         return await execute_setup(
             session, chat_id, symbol, exchange, direction, "reversal",
             current_price, current_price, profile, analysis, signal_id,

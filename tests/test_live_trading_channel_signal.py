@@ -213,6 +213,48 @@ async def test_handle_channel_signal_long_maps_to_dump_risk_direction():
 
 
 @pytest.mark.asyncio
+async def test_handle_channel_signal_immediate_opens_position_without_waiting_for_trigger():
+    """
+    Регрессия 05.10: юзер попросил /manual_signal BTW long догнать пропущенный
+    сигнал -- но handle_channel_signal всегда шёл через execute_setup(reversal),
+    который ждёт отката (_create_pending_reversal_setup), а не входит сразу.
+    Сигнал провисел в _pending_setups больше часа без входа. immediate=True --
+    открывает позицию немедленно по текущей цене, без ожидания отката.
+    """
+    klines_1h = _klines_with_atr(n=24)
+    klines_15m = _klines_with_atr(n=50)
+    profile = {**PROFILE, "tp_split_preset": "aggressive", "breakeven_after_tp": 2}
+    with patch("live_trading.trading_storage.get_profile", return_value=profile), \
+         patch("live_trading.trading_storage.get_open_positions", return_value=[]), \
+         patch("live_trading._symbols_resolver", return_value=(["BTWUSDT"], [])), \
+         patch("live_trading.market_data.fetch_klines", new=AsyncMock(side_effect=[
+             klines_15m, klines_1h,
+             [], [],
+         ])), \
+         patch("live_trading.magnet_levels_module.find_magnet_levels", return_value=[]), \
+         patch("live_trading.trading_storage.create_trade_signal", return_value=102), \
+         patch("live_trading.trading_storage.get_paper_balance", return_value=10000.0), \
+         patch("live_trading.trading_storage.create_position", return_value=55), \
+         patch("live_trading.trading_storage.update_trade_signal_status") as mock_update_status, \
+         patch("live_trading.send_text", new=AsyncMock()) as mock_send:
+        result = await live_trading.handle_channel_signal(
+            session=None, chat_id=111, ticker="BTW", channel_direction="long", immediate=True,
+        )
+
+    assert result["classification"] == "reversal"
+    assert result["position_id"] == 55
+    assert "BTWUSDT" in live_trading._open_positions
+    assert "BTWUSDT" not in live_trading._pending_setups
+    state = live_trading._open_positions["BTWUSDT"]["state"]
+    assert state.direction == "long"  # LONG канала -> фейд дампа -> direction="down" -> long
+    mock_update_status.assert_called_once_with(102, "executed")
+    # два сообщения: "сигнал из канала -- вхожу..." + отчёт о факте входа (SL/TP)
+    assert mock_send.call_count == 2
+    assert any("BTWUSDT" in call.args[2] for call in mock_send.call_args_list)
+    assert any("SL" in call.args[2] for call in mock_send.call_args_list)
+
+
+@pytest.mark.asyncio
 async def test_handle_channel_signal_resolves_bybit_when_not_on_binance():
     klines_1h = _klines_with_atr(n=24)
     klines_15m = _klines_with_atr(n=50)

@@ -19,7 +19,7 @@ async def test_manual_signal_calls_handle_channel_signal_with_parsed_args():
          patch("commands.live_trading.handle_channel_signal", new=AsyncMock(return_value={"ok": True})) as mock_handle:
         await commands._handle_command(None, 111, "/manual_signal BTW long")
 
-    mock_handle.assert_called_once_with(None, 111, "BTW", "long")
+    mock_handle.assert_called_once_with(None, 111, "BTW", "long", immediate=True)
 
 
 @pytest.mark.asyncio

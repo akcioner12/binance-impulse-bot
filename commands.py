@@ -255,7 +255,7 @@ async def _handle_manual_signal_command(session: aiohttp.ClientSession, chat_id:
         await send_text(session, chat_id, "Направление должно быть `long` или `short`.")
         return
 
-    result = await live_trading.handle_channel_signal(session, chat_id, ticker, direction)
+    result = await live_trading.handle_channel_signal(session, chat_id, ticker, direction, immediate=True)
     if result is None:
         await send_text(
             session, chat_id,
