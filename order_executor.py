@@ -165,6 +165,15 @@ def check_take_profit_hits(
             )
             events.append({"event": "moved_to_breakeven", "new_stop_loss": state.stop_loss})
 
+        if idx == 2:
+            # 11.10: бэктест показал, что подтяжка стопа на уровень TP1 именно
+            # при достижении TP2 (независимо от breakeven_after_tp) даёт
+            # устойчивый плюс при минимальном побочном ущербе -- см.
+            # docs/LOGIC_CHANGELOG.md. Безусловно (не только если TP2 -- шаг
+            # безубытка): уровень TP1 всегда не хуже безубытка в пользу сделки.
+            state.stop_loss = state.take_profits[0]["level"]
+            events.append({"event": "moved_to_tp1_level", "new_stop_loss": state.stop_loss})
+
         if idx == 3:
             state.chandelier = ChandelierTrailingStop(direction=state.direction)
             events.append({"event": "chandelier_activated"})

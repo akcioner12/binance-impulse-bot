@@ -44,7 +44,41 @@ def test_tp2_hit_triggers_breakeven_move():
 
     breakeven_event = next(e for e in events if e["event"] == "moved_to_breakeven")
     assert breakeven_event["new_stop_loss"] == pytest.approx(100.08)  # 100 * 1.0008
+    # TP2 также сразу подтягивает стоп на уровень TP1 (ratchet, см. test_tp2_hit_ratchets_stop_to_tp1_level) --
+    # это происходит ПОСЛЕ переноса в безубыток в том же событии, поэтому итоговый stop_loss -- уровень TP1, не безубыток.
+    assert state.stop_loss == pytest.approx(110.0)
+
+
+def test_tp2_hit_ratchets_stop_to_tp1_level():
+    """
+    11.10: бэктест (01.07-11.10, полная вселенная бота) показал, что подтяжка
+    стопа на уровень TP1 именно при достижении TP2 (а не просто в безубыток)
+    даёт +3285.97 к результату при минимальном побочном ущербе (испортила
+    всего 13 сделок из 835, помогла 48) -- в отличие от аналогичной подтяжки
+    на TP3 (убирает Chandelier-трейлинг хвоста), которая наоборот ухудшает
+    результат (-1283.47), т.к. режет лучшие сделки. Поэтому ratchet только на
+    TP2, Chandelier на TP3 не трогаем. breakeven_after_tp=1 -- реальная
+    прод-конфигурация (см. DEFAULT_PROFILE).
+    """
+    state = order_executor.OpenPositionState(
+        position_id=1, direction="long", avg_entry_price=100.0, quantity=4.0,
+        stop_loss=97.0,
+        take_profits=[{"level": 110.0, "size_pct": 25}, {"level": 120.0, "size_pct": 25}, {"level": 130.0, "size_pct": 25}],
+        breakeven_after_tp=1,
+    )
+    order_executor.check_take_profit_hits(state, price=110.0)  # TP1 -> безубыток
     assert state.stop_loss == pytest.approx(100.08)
+
+    events = order_executor.check_take_profit_hits(state, price=120.0)  # TP2 -> ratchet на уровень TP1
+
+    event_names = [e["event"] for e in events]
+    assert "tp2_hit" in event_names
+    assert "moved_to_tp1_level" in event_names
+    assert "moved_to_breakeven" not in event_names  # уже сработал на TP1, повторно на TP2 не фигурирует
+
+    ratchet_event = next(e for e in events if e["event"] == "moved_to_tp1_level")
+    assert ratchet_event["new_stop_loss"] == pytest.approx(110.0)
+    assert state.stop_loss == pytest.approx(110.0)
 
 
 def test_tp3_hit_activates_chandelier():
