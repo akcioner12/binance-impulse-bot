@@ -33,7 +33,7 @@ DEFAULT_PROFILE = {
     "leverage": 3.0,
     "sl_method": "atr",
     "sl_fixed_percent": None,
-    "breakeven_after_tp": 2,
+    "breakeven_after_tp": 1,
     "tp_split_preset": "equal",
     "max_concurrent_trades": 3,
 }
